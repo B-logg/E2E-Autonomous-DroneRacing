@@ -31,6 +31,7 @@ Everything the paper does not specify is defaulted and documented in
 | 3-phase training schedule | III-A | ✅ scripted; **smoke-trained end-to-end**, never at full scale |
 | Simulation evaluation vs Table IV | III-C | ✅ `scripts/evaluate.py`, verified against a checkpoint |
 | One-command GPU runner | — | ✅ `run.sh`, verified from a clean slate |
+| Paper-conformance audit | all | ✅ `tests/test_paper_conformance.py`, 62 assertions |
 | StochGAN mask translation | II-F | ⛔ blocked: needs real flight footage |
 | GateNet (model, losses, data, train, ONNX export) | II-E, App. A | ✅ implemented + tested; **needs labelled images to train** |
 | Onboard deployment | III-A | ⛔ out of scope for phase 1 |
@@ -198,7 +199,7 @@ downstream will work.
 
 ```bash
 python3 -m venv .venv && .venv/bin/pip install -e '.[dev,gatenet]'
-.venv/bin/python -m pytest tests -q          # 41 passed
+.venv/bin/python -m pytest tests -q          # 103 passed
 ```
 
 ## What the informed patch does
@@ -267,7 +268,7 @@ the ±20% motor limits against the ±30% width.
 - The patch applies cleanly to `cdf5709` and every paper-stated hyperparameter
   round-trips through the config (`informed`, `actsmooth 0.002`, `slowtar`,
   `imag_length 16`, `replay_context 16`, `train_ratio 128`, `size12m`).
-- 41 tests, lint clean.
+- 103 tests, lint clean, including a 62-assertion paper-conformance audit.
 
 ## Next
 

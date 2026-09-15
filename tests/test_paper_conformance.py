@@ -524,6 +524,35 @@ def test_smoothness_regularization(cfg):
 
 
 @dv3
+def test_deterministic_policy_at_evaluation(cfg):
+    """II-G: "At inference time and during evaluation, we use the deterministic
+    version of the policy (sigma_t = 0) to produce even smoother control."
+
+    Stock DreamerV3 accepts `mode` in `policy()` and ignores it -- it always
+    samples.  Without the patch, every evaluation would fly a noisier policy
+    than the paper reports."""
+    assert cfg["defaults"]["agent"]["deterministic_eval"] is True
+    src = (DV3 / "dreamerv3" / "agent.py").read_text()
+    assert "mode == 'eval' and self.config.deterministic_eval" in src
+    assert "d.pred()" in src
+
+
+@dv3
+def test_architecture_is_stock_dreamerv3(cfg):
+    """II-G: "SkyDreamer's architecture is almost entirely based on Informed
+    Dreamer, which is largely based on DreamerV3".  The only deviations are the
+    informed decoder, the smoothness loss, the 16-step imagination horizon and
+    the eval-time determinism -- everything else must stay at the defaults of
+    the pinned commit."""
+    d, sd = cfg["defaults"]["agent"], cfg["skydreamer"]["agent"]
+    assert d["dyn"]["typ"] == "rssm"          # recurrent state-space model
+    assert d["enc"]["typ"] == "simple"        # CNN for images, MLP for vectors
+    assert d["dec"]["typ"] == "simple"
+    assert d["policy_dist_cont"] == "bounded_normal"   # Gaussian actor
+    assert set(sd) <= {"informed", "imag_loss", "imag_length"}, sd
+
+
+@dv3
 def test_informed_decoding_is_on(cfg):
     """II-G: the decoder reconstructs privileged information, not observations."""
     assert cfg["skydreamer"]["agent"]["informed"] is True

@@ -1,5 +1,5 @@
 diff --git a/dreamerv3/agent.py b/dreamerv3/agent.py
-index 0cada34..bb4cd5d 100644
+index 0cada34..8c5bf9a 100644
 --- a/dreamerv3/agent.py
 +++ b/dreamerv3/agent.py
 @@ -36,8 +36,20 @@ class Agent(embodied.jax.Agent):
@@ -25,7 +25,21 @@ index 0cada34..bb4cd5d 100644
      self.enc = {
          'simple': rssm.Encoder,
      }[config.enc.typ](enc_space, **config.enc[config.enc.typ], name='enc')
-@@ -128,6 +140,15 @@ class Agent(embodied.jax.Agent):
+@@ -123,11 +135,28 @@ class Agent(embodied.jax.Agent):
+     if dec_carry:
+       dec_carry, dec_entry, recons = self.dec(dec_carry, feat, reset, **kw)
+     policy = self.pol(self.feat2tensor(feat), bdims=1)
+-    act = sample(policy)
++    if mode == 'eval' and self.config.deterministic_eval:
++      # SkyDreamer II-G: "At inference time and during evaluation, we use the
++      # deterministic version of the policy (sigma_t = 0) to produce even
++      # smoother control."  Stock DreamerV3 accepts `mode` and ignores it, so
++      # without this every evaluation flies a sampled -- i.e. noisier -- policy
++      # than the one the paper reports.
++      act = jax.tree.map(lambda d: d.pred(), policy)
++    else:
++      act = sample(policy)
+     out = {}
      out['finite'] = elements.tree.flatdict(jax.tree.map(
          lambda x: jnp.isfinite(x).all(range(1, x.ndim)),
          dict(obs=obs, carry=carry, tokens=tokens, feat=feat, act=act)))
@@ -41,7 +55,7 @@ index 0cada34..bb4cd5d 100644
      carry = (enc_carry, dyn_carry, dec_carry, act)
      if self.config.replay_context:
        out.update(elements.tree.flatdict(dict(
-@@ -389,6 +410,7 @@ def imag_loss(
+@@ -389,6 +418,7 @@ def imag_loss(
      horizon=333,
      lam=0.95,
      actent=3e-4,
@@ -49,7 +63,7 @@ index 0cada34..bb4cd5d 100644
      slowreg=1.0,
  ):
    losses = {}
-@@ -412,6 +434,24 @@ def imag_loss(
+@@ -412,6 +442,24 @@ def imag_loss(
    ents = {k: v.entropy()[:, :-1] for k, v in policy.items()}
    policy_loss = sg(weight[:, :-1]) * -(
        logpi * sg(adv_normed) + actent * sum(ents.values()))
@@ -75,7 +89,7 @@ index 0cada34..bb4cd5d 100644
  
    voffset, vscale = valnorm(ret, update)
 diff --git a/dreamerv3/configs.yaml b/dreamerv3/configs.yaml
-index 786b67e..8579f25 100644
+index 786b67e..46e7345 100644
 --- a/dreamerv3/configs.yaml
 +++ b/dreamerv3/configs.yaml
 @@ -35,6 +35,7 @@ defaults:
@@ -86,16 +100,17 @@ index 786b67e..8579f25 100644
  
    replay:
      size: 5e6
-@@ -83,6 +84,8 @@ defaults:
+@@ -83,6 +84,9 @@ defaults:
      coordinator_address: ''
  
    agent:
 +    informed: False
 +    decode_in_policy: False
++    deterministic_eval: True
      loss_scales: {rec: 1.0, rew: 1.0, con: 1.0, dyn: 1.0, rep: 0.1, policy: 1.0, value: 1.0, repval: 0.3}
      opt: {lr: 4e-5, agc: 0.3, eps: 1e-20, beta1: 0.9, beta2: 0.999, momentum: True, wd: 0.0, schedule: const, warmup: 1000, anneal: 0}
      ac_grads: False
-@@ -94,7 +97,7 @@ defaults:
+@@ -94,7 +98,7 @@ defaults:
        simple: {depth: 64, mults: [2, 3, 4, 4], layers: 3, units: 1024, act: silu, norm: rms, winit: trunc_normal_in, symlog: True, outer: False, kernel: 5, strided: False}
      dec:
        typ: simple
@@ -104,7 +119,7 @@ index 786b67e..8579f25 100644
      rewhead: {layers: 1, units: 1024, act: silu, norm: rms, output: symexp_twohot, outscale: 0.0, winit: trunc_normal_in, bins: 255}
      conhead: {layers: 1, units: 1024, act: silu, norm: rms, output: binary, outscale: 1.0, winit: trunc_normal_in}
      policy: {layers: 3, units: 1024, act: silu, norm: rms, minstd: 0.1, maxstd: 1.0, outscale: 0.01, unimix: 0.01, winit: trunc_normal_in}
-@@ -105,7 +108,7 @@ defaults:
+@@ -105,7 +109,7 @@ defaults:
      imag_length: 15
      horizon: 333
      contdisc: True
@@ -113,7 +128,7 @@ index 786b67e..8579f25 100644
      repl_loss: {slowtar: False, lam: 0.95, slowreg: 1.0}
      slowvalue: {rate: 0.02, every: 1}
      retnorm: {impl: perc, rate: 0.01, limit: 1.0, perclo: 5.0, perchi: 95.0, debias: False}
-@@ -195,6 +198,41 @@ loconav:
+@@ -195,6 +199,41 @@ loconav:
    env.loconav.repeat: 1
    run.train_ratio: 256
  

@@ -13,6 +13,32 @@ Legend for **Risk**: how much a wrong choice here costs us.
 
 ## A. Genuine ambiguities in the paper's own equations
 
+### A0. Does training fix `k_hor` by itself?  No — and here is why it matters less than it looks
+
+`k_hor` is a **simulator** parameter, not a learned one. Nothing in the
+training loop rewrites the equation.  Two things that look like they might:
+
+- **Domain randomization** varies `k_hor` by ±30% around whatever nominal we
+  give it.  That makes the policy robust to the *value*, not to a wrong
+  *functional form*.
+- **The world model estimates `d` online** (that is the paper's parameter-
+  identification result).  But it is inferring which value inside the
+  randomization range this particular drone has.  It cannot discover that the
+  equation should use `|v_xy|` instead of `v_xy²`.
+
+So: if the form is wrong, the policy simply learns to fly a drone whose physics
+are wrong, perfectly happily.
+
+**For the simulation-only reproduction this is not a blocker.** The simulator
+*is* the ground truth there — the policy learns whatever physics we hand it,
+and success rate, accelerations and decoded-state accuracy are all still
+meaningful. The consequence is narrower: our high-speed drag/lift balance
+differs from theirs, so top speeds and lap times will not match exactly.
+
+**It becomes a real problem only at sim-to-real**, where the simulator has to
+match a physical drone. That is what the high-speed flight logs in
+`docs/datasets.md` §4 are for.
+
 ### A1. Horizontal advance ratio `mu` — 🔴
 The paper prints
 
