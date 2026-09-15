@@ -612,6 +612,60 @@ def test_parallel_envs_get_distinct_seeds(cfg):
 
 
 # ==========================================================================
+# GPU-deployment invariants (not paper values, but run-breaking if wrong)
+# ==========================================================================
+
+
+def test_obs_space_matches_a_real_reset():
+    """`obs_space` is declared statically so that reading it cannot initialise a
+    JAX backend before DreamerV3 chooses one.  That makes it possible for the
+    declaration to drift from what the environment actually emits, so check."""
+    pytest.importorskip("elements")
+    from skydreamer.embodied_env import SkyDreamer
+
+    env = SkyDreamer("inverted_loop")
+    declared = {k: v for k, v in env.obs_space.items()
+                if k not in ("reward", "is_first", "is_last", "is_terminal")}
+    _, obs = reset(jax.random.key(0), EnvConfig(track=T.inverted_loop()))
+    assert set(declared) == set(obs), set(declared) ^ set(obs)
+    for k, sp in declared.items():
+        want = tuple(obs[k].shape)
+        assert tuple(sp.shape) == want, (k, sp.shape, want)
+        assert sp.dtype == (np.uint8 if k == "mask" else np.float32), k
+
+
+def test_env_does_no_jax_work_until_used():
+    """DreamerV3's make_agent builds an env to read its spaces *before* it
+    constructs the Agent, and it is the Agent that calls
+    embodied.jax.setup(platform=...).  If constructing an env initialised a
+    backend, the trainer would be stuck with whatever got picked first."""
+    pytest.importorskip("elements")
+    from skydreamer.embodied_env import SkyDreamer
+
+    env = SkyDreamer("inverted_loop")
+    assert env._built is False
+    _ = env.obs_space, env.act_space
+    assert env._built is False, "reading spaces must not build JAX state"
+    assert "cfg" not in vars(env), "cfg must be lazy too"
+    env.step({"reset": True, "action": np.zeros(4, np.float32)})
+    assert env._built is True
+
+
+def test_environment_computes_on_cpu():
+    """Sixteen spawned env workers must not each take a slice of GPU memory for
+    a 64x64 raycast."""
+    pytest.importorskip("elements")
+    from skydreamer.embodied_env import SkyDreamer, _cpu
+
+    env = SkyDreamer("inverted_loop")
+    env.step({"reset": True, "action": np.zeros(4, np.float32)})
+    cpu = _cpu()
+    if cpu is None:
+        pytest.skip("no CPU backend")
+    assert env.cfg.track.pos.devices() == {cpu}, env.cfg.track.pos.devices()
+
+
+# ==========================================================================
 # inventory
 # ==========================================================================
 

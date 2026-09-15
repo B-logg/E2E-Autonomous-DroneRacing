@@ -127,6 +127,12 @@ with 64 GB, shrink the buffer explicitly and note the deviation:
 `run.sh` measures both before training and refuses to start rather than dying
 later.
 
+**Read the RAM number carefully.** vast.ai shows `allocated/total`, e.g.
+`129/129 GB`, and the allocation is `total x gpu_frac`. The same GPU model at
+the same price can come with 6 GB or 126 GB allocated — a machine with 16 GB
+allocated cannot hold the replay buffer no matter how good the card is. Check
+the left-hand number.
+
 **Instances get interrupted.** Use `./run.sh --resume` to continue the newest
 run from its checkpoint instead of starting over.
 

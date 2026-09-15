@@ -47,10 +47,14 @@ for tool in git curl; do
     "${tool} is missing. On a bare NVIDIA CUDA image:  apt-get update && apt-get install -y git curl"
 done
 
+# DreamerV3's `jax.platform` defaults to cuda and embodied.jax.setup() applies
+# it for real, so it has to match the machine.
+JAX_ARGS=()
 if command -v nvidia-smi >/dev/null 2>&1; then
   nvidia-smi --query-gpu=name,memory.total,driver_version --format=csv,noheader
 else
-  echo "no nvidia-smi found -- will fall back to CPU (fine for --smoke, useless for a real run)"
+  echo "no nvidia-smi found -- running on CPU (fine for --smoke, useless for a real run)"
+  JAX_ARGS=(--jax.platform cpu)
 fi
 
 # The replay buffer is the real resource constraint, and it is easy to miss.
@@ -140,7 +144,11 @@ fi
 "${PY}" -c "import jax; print('jax', jax.__version__, jax.devices())"
 
 export PYTHONPATH="${DV3_DIR}:${ROOT}${PYTHONPATH:+:${PYTHONPATH}}"
-export XLA_PYTHON_CLIENT_MEM_FRACTION="${XLA_PYTHON_CLIENT_MEM_FRACTION:-0.90}"
+# `--run.envs 16` spawns sixteen environment processes.  The environment pins
+# its own computation to CPU (skydreamer/embodied_env.py), but a spawned worker
+# can still open a CUDA context, so leave the trainer some headroom instead of
+# letting it preallocate almost the whole card.
+export XLA_PYTHON_CLIENT_MEM_FRACTION="${XLA_PYTHON_CLIENT_MEM_FRACTION:-0.80}"
 
 if [ "${MODE}" = "setup" ]; then
   log "Setup complete. Run './run.sh --smoke' next."
@@ -166,7 +174,8 @@ if [ "${MODE}" = "smoke" ]; then
       --configs skydreamer size1m --logdir "${RUN_DIR}" \
       --run.steps 2000 --run.envs 4 --batch_size 8 --batch_length 16 \
       --report_length 16 --replay_context 1 --run.train_ratio 16 \
-      --run.log_every 20 --run.report_every 1e9 --run.save_every 500
+      --run.log_every 20 --run.report_every 1e9 --run.save_every 500 \
+      "${JAX_ARGS[@]+"${JAX_ARGS[@]}"}"
   "${PY}" "${ROOT}/scripts/evaluate.py" --logdir "${RUN_DIR}" --episodes 8 --laps 1
   log "Smoke test passed. Now run './run.sh' for the real thing."
   exit 0
@@ -194,7 +203,8 @@ fi
 mkdir -p "${RUN_DIR}"
 
 "${PY}" "${ROOT}/scripts/train.py" \
-    --logdir "${RUN_DIR}" --preset "${PRESET}" "${EXTRA[@]+"${EXTRA[@]}"}" \
+    --logdir "${RUN_DIR}" --preset "${PRESET}" --jax.prealloc False \
+    "${JAX_ARGS[@]+"${JAX_ARGS[@]}"}" "${EXTRA[@]+"${EXTRA[@]}"}" \
     2>&1 | tee -a "${RUN_DIR}/train.log"
 
 log "Evaluating in simulation"

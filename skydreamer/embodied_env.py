@@ -12,10 +12,27 @@ One process drives one environment, which is what `embodied` expects; run
 `--run.envs 16` to get parallelism.  Every worker must get its own `seed` or
 all of them replay the same trajectory -- that is what `use_seed: True` in the
 env config is for.
+
+Two things this class is careful about on a GPU box, neither of which shows up
+in a CPU smoke test:
+
+1. **The environment computes on CPU, explicitly.**  `embodied`'s Driver spawns
+   one process per environment (portal uses a spawn context), and each one
+   re-imports this module.  Left alone, sixteen workers would each create their
+   own CUDA context and take VRAM away from the trainer for a 64x64 raycast
+   that belongs on CPU anyway.
+
+2. **No JAX work happens until the environment is first used.**  DreamerV3's
+   `make_agent` builds an environment to read its spaces *before* it constructs
+   the Agent, and it is the Agent that calls `embodied.jax.setup(platform=...)`.
+   If we initialised a JAX backend in `__init__`, the trainer's backend would be
+   chosen before `setup` ever ran.  So the spaces are declared statically and
+   the track, RNG and jitted functions are built lazily.
 """
 
 from __future__ import annotations
 
+import contextlib
 import functools
 
 import jax
@@ -24,6 +41,7 @@ import numpy as np
 
 from . import track as T
 from .env import EnvConfig, reset, step
+from .params import NOMINAL
 
 TRACKS = {
     "inverted_loop": T.inverted_loop,
@@ -44,6 +62,16 @@ def _spaces():
     return elements
 
 
+def _cpu():
+    """The device the environment runs on.  Falls back to the default device if
+    no CPU backend is present, which should not happen but is not worth
+    crashing over."""
+    try:
+        return jax.devices("cpu")[0]
+    except RuntimeError:
+        return None
+
+
 class SkyDreamer:
     """Observation keys without a prefix are `o_t`; `info_*` keys are `i_t`
     and are consumed only by the (informed) decoder."""
@@ -59,35 +87,74 @@ class SkyDreamer:
         if task not in TRACKS:
             raise ValueError(f"unknown track {task!r}; have {sorted(TRACKS)}")
 
+        self._task = task
+        self._size = int(size)
+        self._max_steps = int(max_steps)
+        self._seed = int(seed)
+        self._built = False
+        self._state = None
+        self._done = True
+
+    def _build(self):
+        """Construct the track, RNG and jitted functions, pinned to CPU.
+
+        Deliberately not done in `__init__`: see the module docstring."""
+        if self._built:
+            return
+        device = _cpu()
+        ctx = jax.default_device(device) if device else contextlib.nullcontext()
         # Construction copies the track and the RNG seed to the device, both of
         # which the process-wide `jax_transfer_guard='disallow'` DreamerV3 sets
         # would otherwise reject.
-        with jax.transfer_guard("allow"):
-            self.cfg = EnvConfig(
-                track=TRACKS[task](),
-                max_steps=int(max_steps),
-                image_size=int(size),
-                t_g=TRACK_T_G[task],
+        with ctx, jax.transfer_guard("allow"):
+            self._cfg = EnvConfig(
+                track=TRACKS[self._task](),
+                max_steps=self._max_steps,
+                image_size=self._size,
+                t_g=TRACK_T_G[self._task],
             )
-            self._rng = jax.random.key(seed)
-        self._reset = jax.jit(functools.partial(reset, cfg=self.cfg))
-        self._step = jax.jit(functools.partial(step, cfg=self.cfg))
-        self._state = None
-        self._done = True
+            self._rng = jax.random.key(self._seed)
+        self._device_ctx = (lambda: jax.default_device(device)) if device else (
+            lambda: contextlib.nullcontext())
+        self._reset = jax.jit(functools.partial(reset, cfg=self._cfg))
+        self._step = jax.jit(functools.partial(step, cfg=self._cfg))
+        self._built = True
+
+    @property
+    def cfg(self) -> EnvConfig:
+        """Building on access keeps callers (scripts/evaluate.py) from having to
+        know about the laziness."""
+        self._build()
+        return self._cfg
 
     # -- spaces ------------------------------------------------------------
 
     @functools.cached_property
     def obs_space(self):
+        """Declared statically rather than by running a reset, so that reading
+        the spaces cannot initialise a JAX backend.  `test_obs_space_matches_a
+        _real_reset` pins these against the environment's actual output."""
         el = _spaces()
-        with jax.transfer_guard("allow"):
-            _, obs = self._reset(jax.random.key(0))
-        out = {}
-        for k, v in obs.items():
-            if k == "mask":
-                out[k] = el.Space(np.uint8, tuple(v.shape))
-            else:
-                out[k] = el.Space(np.float32, tuple(v.shape))
+        n = self._size
+        vec = lambda d: el.Space(np.float32, (d,))  # noqa: E731
+        out = {
+            "mask": el.Space(np.uint8, (n, n, 1)),
+            "rates": vec(3),
+            "rpm": vec(4),
+            "flight_plan": vec(T.FLIGHT_PLAN_DIM),
+            "info_p_w": vec(3),
+            "info_p_g": vec(3),
+            "info_v_w": vec(3),
+            "info_v_g": vec(3),
+            "info_att": vec(4),
+            "info_rates": vec(3),
+            "info_rpm": vec(4),
+            "info_cam": vec(3),
+            "info_dyn": vec(len(NOMINAL)),
+            "info_meas_rates": vec(3),
+            "info_meas_rpm": vec(4),
+            "info_flight_plan": vec(T.FLIGHT_PLAN_DIM),
+        }
         out.update(
             reward=el.Space(np.float32),
             is_first=el.Space(bool),
@@ -111,7 +178,8 @@ class SkyDreamer:
         # The env is the host<->device boundary: actions come in as numpy and
         # observations go out as numpy.  DreamerV3 disallows transfers
         # process-wide, so permit them here and nowhere else.
-        with jax.transfer_guard("allow"):
+        self._build()
+        with self._device_ctx(), jax.transfer_guard("allow"):
             return self._step_guarded(action)
 
     def _step_guarded(self, action):
