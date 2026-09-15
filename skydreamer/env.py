@@ -70,6 +70,11 @@ class EnvConfig(NamedTuple):
     image_size: int = IMAGE_SIZE
     gyro_noise: float = GYRO_NOISE_STD
     rpm_noise: float = RPM_NOISE_STD
+    # Table III sets t_g = 0.8 m, but section III-B trains the ladder inverted
+    # loop with "a smaller tunnel size t_g = 0.3 m, to further demonstrate
+    # SkyDreamer's ability to execute tight maneuvers" -- and that is the run
+    # the paper's simulation figures come from.  None = use Table III.
+    t_g: float | None = None
 
 
 class EnvState(NamedTuple):
@@ -125,6 +130,9 @@ def reset(key: jax.Array, cfg: EnvConfig) -> tuple[EnvState, dict]:
     k = jax.random.split(key, 10)
     use_train = jax.random.uniform(k[0]) < cfg.train_fraction
     b = _episode_bounds(use_train)
+
+    if cfg.t_g is not None:
+        b["t_g"] = jnp.asarray(float(cfg.t_g))
 
     params = _sample_params_mixed(k[1], use_train)
     c_e = sample_extrinsics(k[2], TRAIN)  # identical ranges in both columns

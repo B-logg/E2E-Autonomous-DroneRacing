@@ -105,6 +105,52 @@ Other modes:
 
 Override paths with `SKYDREAMER_LOGDIR=/data/logs ./run.sh`.
 
+### GPU requirements
+
+The paper trained on **one A100 80GB, partitioned**: "a 40GB partition with 56
+Shared Multiprocessors". 56 SMs out of the A100's 108, with 40 GB, is exactly
+NVIDIA's `4g.40gb` MIG profile — **4/7 of one A100**, roughly 178 TFLOPS BF16.
+That is the bar to clear, and it is lower than "an A100".
+
+| GPU | BF16 | vs. the paper's slice | notes |
+|---|---|---|---|
+| RTX 4090 24GB | ✅ Ada | ~0.9x | cheapest way to match the paper's pace |
+| A10 / RTX 3090 24GB | ✅ Ampere | ~0.7x | workable, expect ~70 h |
+| L40S 48GB | ✅ Ada | ~1.0x | comfortable headroom |
+| A100 40/80GB (full) | ✅ Ampere | ~1.75x | ~30–40 h |
+| H100 80GB | ✅ Hopper | ~5x on paper | far less in practice, see below |
+| V100 / T4 | ❌ **no BF16** | — | needs `--jax.compute_dtype float32`, 2–3x slower |
+
+**BF16 is the hard requirement.** DreamerV3 defaults to `compute_dtype:
+bfloat16`, which needs Ampere or newer. Volta and Turing will run only in
+float32.
+
+**Minimum memory: 24 GB.** The paper's 40 GB partition is more than the model
+needs — `size12m` is ~12M parameters. The peak is phase 2/3, where
+`batch_length` goes to 256 and the RSSM backprops through 256 timesteps.
+Watch `nvidia-smi` during the smoke test's first training step if you want a
+number for your own card before committing to the long run.
+
+**Do not expect a big GPU to help much.** `size12m` at `batch_size 16` is a
+small workload — it is bound by kernel launch overhead far more than by FLOPs,
+so an H100's 5x paper advantage collapses to maybe 1.5x in practice. Spend on
+*more runs in parallel* (the paper concedes results vary per seed) rather than
+on one faster card.
+
+### Are we running the same budget as the paper?
+
+Yes — identically, and `tests/test_paper_conformance.py` asserts it: 17M
+environment steps, phases at 8M and 13M, `train_ratio` 128, `size12m`,
+`replay_context` 16, buffer 10e6. Same steps, same hyperparameters, same
+schedule.
+
+Matching the *budget* is not the same as matching the *result*. Three things
+stand between us and the paper's numbers, and all three are in
+[`docs/paper_gaps.md`](docs/paper_gaps.md): our track geometry is a
+reconstruction (B1, B2), the `k_hor` term is dimensionally broken as printed
+(A1), and the paper itself says parameter-identification quality "depends on
+the training run" (B7). Budget for three seeds before drawing a conclusion.
+
 ### What it does, in order
 
 1. installs `uv`, creates a Python 3.11 venv

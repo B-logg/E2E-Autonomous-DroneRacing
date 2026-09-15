@@ -30,6 +30,13 @@ TRACKS = {
     "ladder_inverted_loop": T.ladder_inverted_loop,
 }
 
+# Per-track tunnel size.  Table III's 0.8 m applies unless the paper overrides
+# it: section III-B trains the ladder inverted loop at 0.3 m.
+TRACK_T_G = {
+    "inverted_loop": None,  # Table III default, 0.8 m
+    "ladder_inverted_loop": 0.3,
+}
+
 
 def _spaces():
     import elements
@@ -57,7 +64,10 @@ class SkyDreamer:
         # would otherwise reject.
         with jax.transfer_guard("allow"):
             self.cfg = EnvConfig(
-                track=TRACKS[task](), max_steps=int(max_steps), image_size=int(size)
+                track=TRACKS[task](),
+                max_steps=int(max_steps),
+                image_size=int(size),
+                t_g=TRACK_T_G[task],
             )
             self._rng = jax.random.key(seed)
         self._reset = jax.jit(functools.partial(reset, cfg=self.cfg))
