@@ -28,7 +28,9 @@ Everything the paper does not specify is defaulted and documented in
 | Informed POMDP env | II-A/B | ✅ done |
 | Informed decoder patch for DreamerV3 | II-G | ✅ done, applies to pinned commit |
 | Smoothness loss | II-G | ✅ done |
-| 3-phase training schedule | III-A | ✅ scripted; **smoke-trained on CPU**, never on GPU |
+| 3-phase training schedule | III-A | ✅ scripted; **smoke-trained end-to-end**, never at full scale |
+| Simulation evaluation vs Table IV | III-C | ✅ `scripts/evaluate.py`, verified against a checkpoint |
+| One-command GPU runner | — | ✅ `run.sh`, verified from a clean slate |
 | StochGAN mask translation | II-F | ⛔ blocked: needs real flight footage |
 | GateNet (model, losses, data, train, ONNX export) | II-E, App. A | ✅ implemented + tested; **needs labelled images to train** |
 | Onboard deployment | III-A | ⛔ out of scope for phase 1 |
@@ -50,9 +52,13 @@ skydreamer/embodied_env.py   adapter for DreamerV3's driver
 skydreamer/gatenet/     U-Net segmentation for REAL images (PyTorch, not in the
                         sim loop; model / losses / data+synthetic / preprocess)
 scripts/train_gatenet.py, scripts/export_gatenet.py
+scripts/train.py        the paper's 3-phase schedule
+scripts/evaluate.py     simulation validation, scored against Table IV
+run.sh                  clone -> trained + evaluated policy, one command
 patches/informed_dreamer.patch   informed decoding + smoothness loss
 docs/paper_gaps.md      every value the paper does not give us
 docs/datasets.md        what data each stage needs, and in what order
+                        (policy training needs none)
 ```
 
 ## Why no PyTorch3D
@@ -63,19 +69,91 @@ in a handful of array ops, and keeps the whole environment inside JAX. Going
 through PyTorch would put a host round-trip on every one of 17M env steps.
 It is depth-correct: a near gate's hole shows the gate behind it.
 
-## Setup
+## Running it on a GPU server
+
+Everything is in one script. The server needs **only** an NVIDIA GPU with a
+CUDA driver, plus `git` and `curl` — no Python, no conda, no root. `uv` installs
+its own Python 3.11 (jax 0.4.33, which DreamerV3 pins, does not support 3.13).
 
 ```bash
-python3 -m venv .venv && .venv/bin/pip install -e '.[dev]'
-.venv/bin/python -m pytest tests -q          # 41 passed
+git clone <your-repo-url> skydreamer && cd skydreamer
 
-./scripts/setup_dreamerv3.sh                 # clone + patch dreamerv3
-python scripts/train.py --logdir ~/logdir/sd/run1
+./run.sh --smoke     # ~5 min  — DO THIS FIRST
+./run.sh             # ~50 h   — the paper's run, then evaluation
 ```
 
-`setup_dreamerv3.sh` pins commit `cdf5709` — the exact one section III-A cites.
-Every flag the paper names (`size12m`, `replay_context`, `train_ratio`,
-`slowtar`) exists at that commit, so "default hyperparameters" is unambiguous.
+`--smoke` installs everything, runs the 25-test suite, trains 2000 steps with a
+tiny model and evaluates it. The resulting policy is useless by design; what it
+proves is that setup, training, checkpointing and evaluation all work. Five
+minutes here saves finding out at hour 40.
+
+The real run is long, so detach it:
+
+```bash
+tmux new -s sd './run.sh 2>&1 | tee run.log'
+#   ctrl-b d to detach, tmux attach -t sd to come back
+```
+
+Other modes:
+
+| | |
+|---|---|
+| `./run.sh --setup-only` | install only, train nothing |
+| `./run.sh --eval-only` | re-score the most recent run |
+| `./run.sh --big` | the 35M-step big-track preset (needs gate coordinates first) |
+| `./run.sh --seed 1` | any extra flag is forwarded to `scripts/train.py` |
+
+Override paths with `SKYDREAMER_LOGDIR=/data/logs ./run.sh`.
+
+### What it does, in order
+
+1. installs `uv`, creates a Python 3.11 venv
+2. clones DreamerV3 at `cdf5709` — the exact commit section III-A cites — and
+   applies `patches/informed_dreamer.patch`
+3. installs `jax[cuda12]==0.4.33` and the packages DreamerV3 actually imports
+4. trains the paper's three phases (17M steps: defaults → `batch_length` 256 at
+   8M → entropy 1e-5 and lr 2e-6 at 13M)
+5. evaluates 100 episodes × 5 laps in simulation and writes a report
+
+### Output
+
+```
+logdir/small-<timestamp>/
+  evaluation.txt     scored against the paper's Table IV
+  evaluation.json    same, machine-readable
+  metrics.jsonl      per-step training metrics
+  ckpt/              weights
+  train.log
+```
+
+`evaluation.txt` looks like this (numbers here are from an untrained smoke run):
+
+```
+=== inverted_loop ===
+episodes            100
+success rate        0.0%   (paper 100.0%)
+lap 1 [s]           n/a    (paper 3.37)
+laps 2+ [s]         n/a    (paper 3.25)
+max speed [m/s]     n/a    (paper 13.00)
+max accel [g]       n/a    (paper 6.00)
+mean gate error [m] n/a
+min gate margin [m] n/a
+decode err p_w      5.551
+decode err v_w      3.059
+```
+
+**Watch `decode err p_w` first.** It is the distance between the world model's
+decoded position and ground truth. That is the paper's central claim — the
+world model as an implicit state estimator (Figures 4 and 5) — and it moves
+long before lap times do. If it is not falling well under a metre, nothing
+downstream will work.
+
+## Local development
+
+```bash
+python3 -m venv .venv && .venv/bin/pip install -e '.[dev,gatenet]'
+.venv/bin/python -m pytest tests -q          # 41 passed
+```
 
 ## What the informed patch does
 
