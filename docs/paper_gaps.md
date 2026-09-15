@@ -82,22 +82,58 @@ finest-first and `test_five_heads_finest_first` pins it.
 
 ## B. Values the paper simply never states
 
-### B1. Gate coordinates for every track — 🔴 (but we own this)
-No track in the paper has published gate positions; they exist only in prose
-and figures. `track.INVERTED_LOOP` and `track.LADDER_INVERTED_LOOP` are our
-reconstructions, sized to the 6×6 m and 8×8 m volumes the paper reports.
-**Replace with surveyed coordinates from our own track.** Nothing else in the
-codebase depends on them.
+### B1. Gate coordinates — 🟡 (was 🔴; recovered by measuring the figures)
+The paper states gate **sizes** in text (orange: inner 1.5 m, outer 2.7 m;
+MAVLab: 1.5 / 2.1) but never publishes gate **positions**.
 
-The "big track" (Figure 9) is not reconstructed at all — it has ~9 gates in a
-larger hall and the figure is not dimensioned.
+They are, however, recoverable. Figures 4 and 6 are matplotlib plots with
+metric axes, and their captions read "The black blocks mark the gate locations
+with exaggerated thickness". Measuring those blocks in pixels and converting
+through the axis ticks gives:
 
-### B2. Invisible-gate placement — 🔴
+| Quantity | Source | Value |
+|---|---|---|
+| gate outer size | **text** | 2.7 m — measured **2.71 m** ✓ |
+| real-to-virtual gate gap | **text** | 2.7 m — measured **2.66–2.70 m** ✓ |
+| ladder flight area | **text** | 6×4 m — measured **~6×4 m** ✓ |
+| gate centre altitude | figure | **1.35 m** (a 2.7 m gate standing on the floor) |
+| gate positions | figure | X = **−2.0** and **≈ +3.0**, both at Y = 0 |
+| gate separation | figure | **5.0 m** |
+| gate normals | figure | both along **Y** (the two gate planes are parallel) |
+
+The first three rows are the validation: the same pixel-to-metre calibration
+reproduces three numbers the text states independently, so the calibration is
+right and the derived positions are good to about **±0.05 m**.
+
+**Remaining uncertainty.** Gate 1's block is clipped by the top of the plot, so
+its centre is only pinned to **+2.8…+3.0 (±0.2 m)**. The blocks' thickness is
+explicitly "exaggerated" and carries no information. And this is a
+*reconstruction*, not published data — the only way to get official coordinates
+is to ask the authors.
+
+**Consequence:** we should not expect to match the paper's lap times (3.37 s
+etc.) exactly, since those depend on the precise track. Success rate, speeds,
+accelerations and decoded-state accuracy should be comparable.
+
+The "big track" (Figure 9) is still not reconstructed — ~9 gates, and its
+figure is not dimensioned.
+
+### B2. Invisible-gate placement — 🟡 (was 🔴; the loop one is now pinned)
 The paper says "additional invisible gates are added to enforce the correct
-flight maneuvers" and never says where, how many, or how big. These are what
-actually *define* the inverted loop and the ladder: without them the drone
-would fly the short way round. Our guesses are the `visible=False` entries in
-`track.py`. Expect to iterate on these more than on anything else.
+flight maneuvers" without saying where or how many. These are what actually
+*define* the inverted loop and the ladder.
+
+The **inverted loop's** virtual gate is now pinned, from text and figure
+agreeing: "the separation between the actual gate and the virtual gate of
+**2.7 m**", and the side view of Figure 6 shows the trajectory crossing the
+gate plane at altitude 1.35 m (the gate) and again at **4.05 m** — exactly
+2.7 m higher. So the virtual gate sits **directly above the real gate, 2.7 m
+up**, and is flown inverted. A half loop of diameter 2.7 m has radius 1.35 m,
+matching the text's "almost perfect circle with a radius of roughly 1.5 m".
+
+The **ladder's** virtual gates are still ours. The text constrains them only
+as "a full 360° left turn, and flies back over it" with the drone "remaining
+mostly within 1 m of the gate". Expect to iterate here.
 
 ### B3. Sensor noise on `Omega_hat` and `omega_hat` — 🟡
 The paper is explicit that the privileged information carries *ground-truth*

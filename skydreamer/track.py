@@ -172,40 +172,75 @@ def flight_plan(track: Track, i: jax.Array) -> jax.Array:
 # Reference tracks
 # --------------------------------------------------------------------------
 #
-# NOT FROM THE PAPER.  The paper never publishes gate coordinates for any of
-# its tracks; it only describes them in prose and figures.  These are our
-# reconstructions, sized to the flight volumes the paper reports
-# (6x6 m for the small tracks, 8x8 m test space).  Replace them with your own
-# surveyed gate positions -- nothing else in the codebase depends on them.
+# PROVENANCE.  The paper never publishes gate coordinates.  What follows is a
+# reconstruction, and each number is labelled with where it came from:
 #
-# NED: z is NEGATIVE upward, so z = -1.5 means 1.5 m above the floor.
+#   [TEXT]  stated numerically in the paper's prose -- authoritative.
+#   [FIG]   measured off Figures 4 and 6, which are matplotlib plots with
+#           metric axes whose caption reads "The black blocks mark the gate
+#           locations with exaggerated thickness".
+#   [OURS]  our choice; the paper constrains it only qualitatively.
+#
+# The [FIG] readings are trustworthy because the same pixel-to-metre
+# calibration reproduces three quantities the text states independently:
+#   gate outer size          text 2.7 m   measured 2.71 m
+#   real-to-virtual gate gap text 2.7 m   measured 2.66-2.70 m
+#   ladder flight area       text 6x4 m   measured ~6x4 m
+# Residual uncertainty is about +-0.05 m, except gate 1 whose block is clipped
+# by the top of the plot, leaving its centre uncertain to about +-0.2 m.
+#
+# See docs/paper_gaps.md B1/B2.  Replace all of this with surveyed coordinates
+# once the real track exists -- nothing else depends on it.
+#
+# NED: z is NEGATIVE upward.  Gate yaw sets the normal, i.e. the intended
+# direction of travel: yaw = 90 deg means the drone flies through it toward +Y.
+
+# [FIG] Both small tracks share the same two real gates: 5.0 m apart along X,
+# both in the plane Y = 0, both flown along Y.
+GATE_1_X = 3.0       # [FIG] clipped block; centre is +2.8..+3.0
+GATE_2_X = -2.0      # [FIG] full block, span 2.71 m, centre -2.01
+GATE_Z = -1.35       # [FIG] a 2.7 m outer gate standing on the floor
+LOOP_GAP = 2.7       # [TEXT] "the separation between the actual gate and the
+                     # virtual gate of 2.7 m"; [FIG] confirms the loop's top
+                     # crossing at altitude 4.0 m = 1.35 + 2.7
 
 INVERTED_LOOP = [
-    # Gate 1: entry gate, flown north.
-    (0.0, 0.0, -1.5, 0.0),
-    # Gate 2: 4 m further north, same heading -- the split-S / loop gate.
-    (4.0, 0.0, -1.5, 0.0),
-    # Invisible gate above gate 2: forces the drone over the top before
-    # dropping back through gate 2 inverted, which is what makes it a loop.
-    (4.0, 0.0, -3.2, 180.0, False),
-    # Invisible return gate, flown south back toward gate 1.
-    (2.0, 0.0, -1.5, 180.0, False),
+    # Gate 1, real.  Flown toward +Y; Table III starts the drone 2-4 m before
+    # it, which matches the slow (dark) start at Y ~ -3.2 in Figure 6.
+    (GATE_1_X, 0.0, GATE_Z, 90.0),
+    # [OURS] Virtual gate 2.7 m above gate 2, flown toward -Y: "SkyDreamer then
+    # flies over the second gate".  The height is [TEXT]+[FIG]; that it is
+    # directly overhead rather than offset is our reading of the side view.
+    (GATE_2_X, 0.0, GATE_Z - LOOP_GAP, 270.0, False),
+    # Gate 2, real.  The split-S: roll inverted over the gate and pull through
+    # it, which reverses the direction of travel back to +Y.  Half a loop of
+    # diameter 2.7 m has radius 1.35 m -- [TEXT] "an almost perfect circle with
+    # a radius of roughly 1.5 m".
+    (GATE_2_X, 0.0, GATE_Z, 90.0),
 ]
 
 LADDER_INVERTED_LOOP = [
-    (0.0, 0.0, -1.5, 0.0),
-    # Tight ladder at gate 1: up and back over it within ~1 m.
-    (1.0, 0.0, -3.0, 180.0, False),
-    (-0.5, 0.0, -2.0, 0.0, False),
-    (4.0, 0.0, -1.5, 0.0),
-    (4.0, 0.0, -3.2, 180.0, False),
-    (2.0, 0.0, -1.5, 180.0, False),
+    # Same two gates; the difference is the ladder at gate 1.
+    (GATE_1_X, 0.0, GATE_Z, 90.0),
+    # [OURS] The ladder: "a full 360 degree left turn, and flies back over it",
+    # with the drone "remaining mostly within 1 m of the gate" [TEXT].  Two
+    # virtual gates beside and above gate 1 force the turn to stay tight.
+    (GATE_1_X + 1.0, 1.0, GATE_Z - 1.2, 270.0, False),
+    (GATE_1_X - 1.0, 0.0, GATE_Z - 0.6, 90.0, False),
+    # ...then the same inverted loop at gate 2.
+    (GATE_2_X, 0.0, GATE_Z - LOOP_GAP, 270.0, False),
+    (GATE_2_X, 0.0, GATE_Z, 90.0),
 ]
 
 
 def inverted_loop() -> Track:
+    """Figure 6 / Table IV "Loop (orange)".  Orange gates: inner 1.5 m, outer
+    2.7 m [TEXT]."""
     return make_track(INVERTED_LOOP, inner=1.5, outer=2.7)
 
 
 def ladder_inverted_loop() -> Track:
+    """Figures 4 and 5 / Table IV "Ladder loop (orange)".  This is the track the
+    paper's simulation results come from, and section III-B trains it with
+    t_g = 0.3 m rather than Table III's 0.8 m."""
     return make_track(LADDER_INVERTED_LOOP, inner=1.5, outer=2.7)

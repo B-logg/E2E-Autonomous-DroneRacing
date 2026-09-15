@@ -155,21 +155,34 @@ def test_rate_penalty_is_negligible_until_it_bites():
 # --------------------------------------------------------------------------
 
 
+def _approach_gate_one(tr, back=4.0):
+    """Sit `back` metres before gate 1 on its normal, pitched 50 deg forward so
+    the 50 deg upward camera looks straight down the track."""
+    g = np.asarray(tr.pos[0])
+    yaw = float(tr.yaw[0])
+    eye = jnp.array([g[0] - back * np.cos(yaw), g[1] - back * np.sin(yaw), g[2]])
+    q = euler_to_quat(jnp.array(0.0), jnp.array(-np.deg2rad(50)), jnp.array(yaw))
+    return eye, q
+
+
 def test_gate_renders_centred_when_looked_at_straight_on():
     tr = T.inverted_loop()
-    q = euler_to_quat(jnp.array(0.0), jnp.array(-np.deg2rad(50)), jnp.array(0.0))
+    eye, q = _approach_gate_one(tr)
     ce = jnp.array([0.0, np.deg2rad(50.0), 0.0])
-    m = np.asarray(render_mask(jnp.array([-4.0, 0.0, -1.5]), q, ce, tr))
+    m = np.asarray(render_mask(eye, q, ce, tr))
     assert m.sum() > 0
-    ys, xs = np.nonzero(m)
-    assert abs(xs.mean() - 32) < 3 and abs(ys.mean() - 32) < 5
+    # Gate 2 sits 5 m to the side and shows up at the frame edge, so measure
+    # only the central half -- otherwise it drags the centroid off.
+    ys, xs = np.nonzero(m[:, 16:48])
+    assert abs((xs + 16).mean() - 32) < 3, (xs + 16).mean()
+    assert abs(ys.mean() - 32) < 5, ys.mean()
 
 
 def test_camera_extrinsics_actually_move_the_image():
     tr = T.inverted_loop()
-    q = euler_to_quat(jnp.array(0.0), jnp.array(-np.deg2rad(50)), jnp.array(0.0))
-    a = np.asarray(render_mask(jnp.array([-4.0, 0, -1.5]), q, jnp.array([0.0, np.deg2rad(50), 0.0]), tr))
-    b = np.asarray(render_mask(jnp.array([-4.0, 0, -1.5]), q, jnp.array([0.0, np.deg2rad(45), 0.0]), tr))
+    eye, q = _approach_gate_one(tr)
+    a = np.asarray(render_mask(eye, q, jnp.array([0.0, np.deg2rad(50), 0.0]), tr))
+    b = np.asarray(render_mask(eye, q, jnp.array([0.0, np.deg2rad(45), 0.0]), tr))
     assert not np.array_equal(a, b)
 
 
