@@ -106,6 +106,36 @@ Other modes:
 
 Override paths with `SKYDREAMER_LOGDIR=/data/logs ./run.sh`.
 
+### Renting on vast.ai (or any cloud)
+
+Two settings there matter more than the GPU, and one of them is easy to miss.
+
+**Disk: set the slider to 150 GB.** The paper's `replay.size` is 10e6 steps
+(31 h of flight). Each step stores a 64x64 mask plus vectors = **4596 bytes**,
+so the buffer is **~46 GB**, and DreamerV3 keeps it in RAM *and* writes it to
+disk. A default 16 GB disk dies part-way through a 30 h run. Extra disk costs
+about $0.05/hr — nothing next to the GPU.
+
+**RAM: prefer 128 GB.** 64 GB has to hold that same ~46 GB buffer plus JAX plus
+16 environment workers. It may survive; it may OOM at hour 20. If you are stuck
+with 64 GB, shrink the buffer explicitly and note the deviation:
+
+```bash
+./run.sh --replay.size 5e6     # 15 h of flight instead of 31 h
+```
+
+`run.sh` measures both before training and refuses to start rather than dying
+later.
+
+**Instances get interrupted.** Use `./run.sh --resume` to continue the newest
+run from its checkpoint instead of starting over.
+
+**Template: pick a plain NVIDIA CUDA image.** `jax[cuda12]` ships its own CUDA
+libraries as pip wheels, so all the host must provide is the driver — any
+recent CUDA 12.x / Ubuntu 22.04 template works, and a PyTorch template just
+wastes image size. CUDA base images often lack `git` and `curl`; `run.sh` checks
+and tells you the apt line if they are missing.
+
 ### GPU requirements
 
 The paper trained on **one A100 80GB, partitioned**: "a 40GB partition with 56
