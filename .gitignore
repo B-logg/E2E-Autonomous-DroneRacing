@@ -1,0 +1,12 @@
+.venv/
+.venv-*/
+third_party/
+logdir/
+checkpoints/
+data/
+__pycache__/
+*.pyc
+*.egg-info/
+.pytest_cache/
+paper.html
+ferede_rl/

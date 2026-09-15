@@ -1,0 +1,1211 @@
+ 
+
+ SkyDreamer: Interpretable End-to-End Vision-Based Drone Racing with Model-Based Reinforcement Learning 
+
+ Report GitHub Issue 
+ × 
+
+ Title: 
+
+ Content selection saved. Describe the issue below: 
+
+ Description: 
+
+ Submit without GitHub 
+ Submit in GitHub 
+
+ arXiv is now an independent nonprofit! 
+ Learn more 
+ × 
+
+ Back to arXiv 
+
+ Why HTML? 
+
+ Report Issue 
+
+ Back to Abstract 
+
+ Download PDF 
+
+ Abstract 
+ I Introduction 
+ II Methodology 
+
+ II-A Problem statement 
+ II-B Spaces 
+ II-C Reward function 
+ II-D Quadcopter dynamics 
+ II-E Segmentation masks 
+ II-F Visual augmentations 
+ II-G SkyDreamer architecture 
+ II-H Flight Plan Logic 
+
+ III Experiments and Results 
+
+ III-A Experimental setup 
+ III-B Simulation 
+ III-C Real-world small tracks 
+ III-D Real-world big track 
+
+ IV Conclusion 
+ References 
+ A GateNet Implementation Details 
+
+ Network 
+ Training setup 
+ Data augmentation 
+ Gate-specific implementation 
+
+ B StochGAN Implementation Details 
+
+ Generator 
+ Discriminator 
+ Training setup. 
+
+ License: CC BY 4.0
+
+arXiv:2510.14783v1 [cs.RO] 16 Oct 2025 
+
+ SkyDreamer: Interpretable End-to-End Vision-Based Drone Racing with Model-Based Reinforcement Learning 
+
+ Aderik Verraest
+
+ Stavrow Bahnam
+
+ Robin Ferede
+
+ Guido de Croon
+
+ Christophe De Wagter
+ † † thanks: The authors are with the Micro Air Vehicle Lab of the Faculty of Aerospace Engineering, Delft University of Technology, 2629 HS Delft, The Netherlands 
+
+ Abstract 
+
+ Autonomous drone racing (ADR) systems have recently achieved champion-level performance, yet remain highly specific to drone racing. While end-to-end vision-based methods promise broader applicability, no system to date simultaneously achieves full sim-to-real transfer, onboard execution, and champion-level performance. In this work, we present SkyDreamer , to the best of our knowledge, the first end-to-end vision-based ADR policy that maps directly from pixel-level representations to motor commands. SkyDreamer builds on informed Dreamer , a model-based reinforcement learning approach where the world model decodes to privileged information only available during training. By extending this concept to end-to-end vision-based ADR, the world model effectively functions as an implicit state and parameter estimator, greatly improving interpretability. SkyDreamer runs fully onboard without external aid, resolves visual ambiguities by tracking progress using the state decoded from the world model’s hidden state, and requires no extrinsic camera calibration, enabling rapid deployment across different drones without retraining. Real-world experiments show that SkyDreamer achieves robust, high-speed flight, executing tight maneuvers such as an inverted loop, a split-S and a ladder, reaching speeds of up to $21\,\text{m/s}$ and accelerations of up to $6\,\text{g}$ . It further demonstrates a non-trivial visual sim-to-real transfer by operating on poor-quality segmentation masks, and exhibits robustness to battery depletion by accurately estimating the maximum attainable motor RPM and adjusting its flight path in real-time. These results highlight SkyDreamer’s adaptability to important aspects of the reality gap, bringing robustness while still achieving extremely high-speed, agile flight. 
+
+ I Introduction 
+
+ Recent advancements in autonomous drone racing (ADR) have reached champion-level performance, even beating human world champions [ 1 , 2 ] . In 2023, Kaufmann et al. [ 1 ] became the first to defeat human champion drone racers with autonomous drones. More recently, Bahnam et al. [ 2 ] achieved the first champion-level victory in an externally organized competition, relying solely on a low-cost monocular rolling shutter camera for perception. 
+
+ Figure 1 : Real-world inverted loop track with MAVLab gates. SkyDreamer flies agile maneuvers such as an inverted loop in the real world without external aid (top), operates end-to-end on poor-quality segmentation masks obtained from onboard images (shown in red, bottom-right), and directly controls the physical platform by outputting low-level motor commands. In a flight area confined to $6\times 6\,\text{m}$ , it reaches speeds of up to $13\,\text{m/s}$ and accelerations of up to $6\,\text{g}$ . The racing drone is identical to the one used in the A2RL x DCL Autonomous Drone Championship 2025 [ 2 ] (bottom-left). 
+
+ Despite these successes, current champion-level ADR systems [ 2 , 1 ] remain modular pipelines of classical algorithms. They are highly specialized and inflexible, relying on gate corner detection and Perspective-n-Point (PnP) for state estimation. Their performance further depends on accurately mapped track layouts, rectangular gates of known size, precise camera calibration, and hand-tuned extended Kalman filters (EKFs). Optimizing perception, state estimation, and control in isolation further limits overall performance. Such pipelines cannot generalize beyond the highly structured settings they were designed for. In contrast, humans fly with remarkable adaptability – handling unseen tracks, different drones, and even unstructured environments with minimal task-specific training [ 3 ] . This gap underscores the inherent limitations in today’s champion-level ADR systems. 
+
+ Table I : Comparison of recent end-to-end vision-based ADR approaches with SkyDreamer. “Offboard” indicates that some computation occurs offboard, while “onboard” means all computation runs onboard with no external aid during flight. “HIL” denotes that images for the policy during real-world flight are rendered using MoCap. “Visual ambiguity” refers to situations where visually similar observations require different flight paths, such as in the ladder inverted loop track shown in Figure 4 . The perception reward encourages the drone to look toward gates, introducing human bias. Only performance metrics from real-world experiments are considered in this comparison. 
+
+ Criterion 
+ Geles et al. [ 4 ] 
+ Xing et al. [ 5 ] 
+ Romero et al. [ 6 ] 
+ Krinner et al. [ 7 ] 
+ SkyDreamer (ours) 
+
+ Onboard 
+
+ computation 
+
+ Offboard 
+ Offboard 
+ Offboard 
+ Offboard 
+
+ Onboard 
+
+ without external aid 
+
+ Champion-level 
+ No ( $2\,g$ ) 
+ No ( $2.7\,\text{TWR}$ ) 1 1 
+ 1 
+
+ Xing et al. [ 5 ] did perform limited experiments in simulation demonstrating champion-level performance comparable to [ 1 ] , but failed to demonstrate such performance in the real world. 
+ No ( $2.7\,\text{TWR}$ ) 
+ No 
+ Likely ( $6\;g$ ) 
+
+ Sim-to-real 
+
+ transfer 
+
+ Yes 
+ HIL (only dynamics) 
+ HIL (only dynamics) 
+ HIL (only dynamics) 
+
+ Yes, non-trivial 
+
+ visual sim-to-real gap 
+
+ Interpretability 
+ None 
+ None 
+
+ Limited, latent $\rightarrow$ 
+
+ reconstructed image 
+
+ Yes, via decoding to 
+
+ states 
+
+ Yes, via decoding to 
+
+ states and parameters 
+
+ Robust to 
+
+ visual ambiguity 
+
+ Not demonstrated 
+ Not demonstrated 
+ Not demonstrated 
+ Not demonstrated 
+
+ Yes, via progress tracking 
+
+ using world model 
+
+ Perception 
+
+ reward 
+
+ Yes 
+ Yes 
+ No, emergent behavior 
+ No, emergent behavior 
+ No, emergent behavior 
+
+ To address these limitations, research has turned toward end-to-end vision-based learning, where policies map pixel-level representations directly to actions without explicit state estimation [ 6 , 4 , 5 , 7 ] . Such learned representations offer greater flexibility, potentially enhancing performance by jointly optimizing perception, state estimation, and control. Crucially, leveraging pixel-level inputs, such as depth maps, can generalize to unstructured environments while introducing a smaller reality gap compared to raw RGB images, as demonstrated in [ 8 , 9 , 10 , 11 ] . At the same time, end-to-end learning reduces reliance on human-designed abstractions and reward shaping, which can constrain system performance. 
+
+ While these benefits are promising, practical implementations remain challenging. Only Geles et al. [ 4 ] manage to bridge the visual reality gap, whereas Xing et al. [ 5 ] , Romero et al. [ 6 ] and Krinner et al. [ 7 ] still rely on hardware-in-the-loop (HIL) simulation, where images during real-world flights are rendered using an external motion capture (MoCap) system rather than the real camera feed. Furthermore, as summarized in Table I , none of these approaches perform all computation fully onboard, nor do they demonstrate champion-level performance in the real world, as the thrust-to-weight ratio (TWR) was deliberately software-capped. To date, no end-to-end vision-based method simultaneously achieves full sim-to-real transfer, onboard execution, and champion-level flight. 
+
+ An additional, and often overlooked, constraint is that most ADR approaches treat collective thrust and body rates (CTBR) as the final control layer, relying on an inner-loop controller such as PID or INDI at deployment to track these CTBR actions with motor commands [ 1 , 4 , 6 , 5 , 7 ] . As an alternative to this two-stage control structure, the European Space Agency (ESA) introduced guidance and control networks (G&CNETs), which map state inputs directly to actuator commands [ 12 ] . For quadcopter control, this translates to generating motor commands directly rather than relying on intermediate CTBR actions. Doing so is required for several space applications and simplifies modeling, as the motor response is generally easier to capture than the complex behavior of an inner-loop controller. Additionally, direct motor control may also enable more optimal performance compared to approaches that rely on inner-loop controllers. 
+
+ Building on this concept, Ferede et al. [ 13 ] trained G&CNETs using reinforcement learning (RL), specifically proximal policy optimization (PPO) [ 14 ] , for ADR, demonstrating that fully neural control policies can outperform traditional cascaded controllers when trained under comparable conditions [ 15 , 13 , 16 ] . The use of G&CNETs for quadcopter control has already proven successful in ADR competitions: during the A2RL x DCL Autonomous Drone Championship in 2025, a neural end-to-end state-based controller outperformed human world-champion pilots, underscoring its real-world potential [ 2 ] . 
+
+ A promising approach to training end-to-end vision-based ADR policies is model-based RL. Unlike model-free RL methods, such as PPO [ 14 ] and soft actor-critic (SAC) [ 17 ] , model-based RL learns an internal model of the environment, often referred to as a world model [ 18 ] . The core idea is to capture environment dynamics by learning to predict future observations – or their latent representations – based on past observations and actions using the world model. Actor training is thus performed entirely in latent space, where the actor interacts with the learned world model rather than the physical or simulated environment. This is accomplished through latent imagination, in which future latent states are predicted from previous latent states and actions. Consequently, sample efficiency is greatly improved: physical or simulated rollouts are required only to train the world model, not the actor. This results in orders-of-magnitude gains in sample efficiency compared to model-free RL, which is particularly important for end-to-end vision-based policies, where rendering observations at every timestep can be computationally expensive [ 18 , 19 ] . 
+
+ In model-based RL, the Dreamer algorithms introduced by Hafner et al. have become among the most widely adopted [ 19 , 20 , 21 , 22 , 23 ] . Notably, Wu et al. [ 23 ] demonstrated that a robot could be trained to walk using only one hour of real-world interactions – without relying on simulation – highlighting the remarkable sample efficiency of model-based RL. More recently, DreamerV3 has emerged as a particularly promising variant, achieving state-of-the-art performance across more than 150 diverse environments using a single set of hyperparameters [ 19 ] . Romero et al. [ 6 ] have already applied DreamerV3 to end-to-end vision-based ADR, though with limited success both in terms of performance and sim-to-real transfer. 
+
+ To further aid learning efficiency, the use of privileged information during training has shown great promise [ 4 , 5 ] . In model-based RL, this idea can be extended by allowing the world model to decode privileged observations, such as ground-truth states, an idea already explored for end-to-end vision-based ADR in Krinner et al. [ 7 ] . This has been shown to yield significant performance gains, particularly in tasks where such states are recoverable from sequences of observations [ 24 , 25 ] , as in vision-based ADR. Furthermore, privileged reconstructions enable the world model to act as an implicit state estimator, improving interpretability, unlike prior approaches [ 4 , 6 , 5 ] that largely operate as black boxes. 
+
+ Alternative model-based approaches such as TD-MPC2 combine latent imagination with model predictive control (MPC) [ 26 ] . By relying on MPC rather than RL, TD-MPC2 outperforms DreamerV3 on several continuous control benchmarks [ 26 ] . However, unlike Dreamer, TD-MPC2 lacks a recurrent structure in latent space and is therefore unable to model long-range temporal dependencies. Its reliance on iterative optimization at runtime further limits its suitability for onboard deployment. Other latent-space MPC approaches include [ 27 ] and [ 28 ] . Notably, Zhou et al. [ 28 ] demonstrated zero-shot planning with a pretrained billion-parameter world model. While impressive, the scale of such models makes deployment on resource-constrained platforms like drones impractical. 
+
+ Contributions 
+
+ In this work, we present SkyDreamer , to the best of our knowledge the first end-to-end vision-based ADR policy that maps directly from pixels to motor commands , eliminating the need for inner-loop controllers in end-to-end vision-based drone racing. Beyond this main contribution, our work offers several further advances, summarized below and in Table I : 
+
+ • 
+
+ SkyDreamer greatly improves interpretability by decoding privileged information, effectively turning the world model into an implicit state and parameter estimator, 
+
+ • 
+
+ is, to the best of our knowledge, the first end-to-end vision-based ADR policy to reach accelerations of up to $\boldsymbol{6}\,\text{g}$ and speeds of up to $\boldsymbol{21}\,\text{m/s}$ in the real world, on par with state-of-the-art classical approaches [ 2 , 1 ] , 
+
+ • 
+
+ demonstrates non-trivial visual sim-to-real transfer using poor-quality segmentation masks, 
+
+ • 
+
+ resolves visual ambiguity by explicitly tracking progress through the state decoded from the world model’s hidden state, laying the foundation for end-to-end vision-based policies capable of flying arbitrary tracks, 
+
+ • 
+
+ requires no accelerometer , 
+
+ • 
+
+ runs fully onboard without external aid , 
+
+ • 
+
+ estimates drone-specific parameters, such as camera extrinsics, on the fly and operates on images standardized via intrinsic calibration, enabling rapid deployment across different drones without retraining. 
+
+ II Methodology 
+
+ II-A Problem statement 
+
+ We aim to develop an end-to-end vision-based policy capable of flying a quadcopter at high speed through a known track using only onboard computation and sensing. Specifically, the goal is to maximize the quadcopter’s lap speed around a pre-mapped track marked by gates, subject to the constraints of the physical platform and the requirement to pass through all gates in a predefined order while avoiding collisions. The policy receives only raw sensory inputs: pixel-level representations, body rate measurements, and motor RPM measurements. Additionally, the drone’s camera extrinsic parameters are assumed to be uncalibrated, as extrinsic calibration is both time-consuming and must often be repeated during operation due to changes in the camera angle from touching, crashing, or hitting gates, making it impractical for real-world competitions. The policy must therefore learn to handle this uncertainty. It shall map these observations directly to motor commands, without relying on an intermediate inner-loop controller such as PID or INDI. During training only, the policy is granted access to privileged information, including ground-truth states, camera parameters, and dynamic parameters of the system. 
+
+ We formalize this problem as an informed partially observable Markov decision process (informed POMDP) [ 24 ] , which extends the standard POMDP [ 29 ] . The informed POMDP was first introduced by Lambrechts et al. [ 24 ] , who provide a detailed formulation. The key distinction with a standard POMDP is that additional, privileged information is available during training but not at execution time. This additional information can be exploited to improve the training process. 
+
+ Formally, the informed POMDP is defined as: 
+
+ $\widetilde{\mathcal{P}}=(\mathcal{S},\mathcal{U},\mathcal{I},\mathcal{O},T,R,\widetilde{\mathcal{I}},\widetilde{\mathcal{O}},P,\gamma)$ 
+
+ with the following components: 
+
+ • 
+
+ state space $\mathcal{S}$ with states $\mathbf{s}_{t}$ 
+
+ • 
+
+ action space $\mathcal{U}$ with actions $\mathbf{u}_{t}$ 
+
+ • 
+
+ information space $\mathcal{I}$ with information $\mathbf{i}_{t}$ only available during training 
+
+ • 
+
+ observation space $\mathcal{O}$ with observations $\mathbf{o}_{t}$ 
+
+ • 
+
+ transition distribution $T(\mathbf{s}_{t+1}\mid\mathbf{s}_{t},\mathbf{u}_{t})$ 
+
+ • 
+
+ reward function $r_{t}=R(\mathbf{s}_{t},\mathbf{u}_{t})$ , which is designed to reflect the task objective and is detailed further in subsection II-C . 
+
+ • 
+
+ information distribution: $\widetilde{\mathcal{I}}(\mathbf{i}_{t}\mid\mathbf{s}_{t})$ 
+
+ • 
+
+ observation distribution: $\widetilde{\mathcal{O}}(\mathbf{o}_{t}\mid\mathbf{i}_{t})$ available during training and execution 
+
+ • 
+
+ initial state distribution: $P(\mathbf{s}_{0})$ , which is detailed further in Table III 
+
+ • 
+
+ discount factor: $\gamma\in[0,1)$ 
+
+ In an Informed POMDP, the states $\mathbf{s}_{t}$ are never observable. At training time, the informed POMDP does provide the policy access to a history $\mathbf{h}^{+}_{t}$ : 
+
+ $\displaystyle\mathbf{h}^{+}_{t}=(\mathbf{i}_{0},\mathbf{o}_{0},\mathbf{u}_{0},\mathbf{r}_{0},...,\mathbf{i}_{t-1},\mathbf{o}_{t-1},\mathbf{u}_{t-1},\mathbf{r}_{t-1},\mathbf{i}_{t},\mathbf{o}_{t})$ 
+
+ consisting of privileged information, observations, actions and rewards. The observations $\mathbf{o}_{t}$ are assumed to be conditionally dependent on the states $\mathbf{s}_{t}$ , following the Bayesian network $\mathbf{s}_{t}\rightarrow\mathbf{i}_{t}\rightarrow\mathbf{o}_{t}$ . To satisfy this assumption, and following Lambrechts et al. [ 24 ] , we define the information variable as $\mathbf{i}_{t}=[\mathbf{o}_{t},\mathbf{o}_{t}^{+}]^{T}$ , a concatenation of the observations $\mathbf{o}_{t}$ and privileged observations $\mathbf{o}_{t}^{+}$ only available during training (e.g. position $\mathbf{p}$ or velocity $\mathbf{v}$ ). At execution time, we define the underlying execution POMDP $\widetilde{\mathcal{P}}$ as: 
+
+ $\displaystyle\widetilde{\mathcal{P}}=(\mathcal{S},\mathcal{U},\mathcal{O},T,R,\widetilde{\mathcal{O}},P,\gamma)$ 
+
+ which provides access to a history $\mathbf{h}_{t}$ : 
+
+ $\displaystyle\mathbf{h}_{t}=(\mathbf{o}_{0},\mathbf{u}_{0},...,\mathbf{o}_{t-1},\mathbf{u}_{t-1},\mathbf{o}_{t})$ 
+
+ consisting of only observations and actions [ 24 , 6 ] . 
+
+ The objective in an informed POMDP is to maximize the expected return in the underlying execution POMDP by learning a policy $\pi_{\boldsymbol{\theta}}(\mathbf{u_{t}}|\mathbf{h}_{t})$ , in our case parameterized by neural network parameters $\boldsymbol{\theta}$ . The resulting optimal policy $\pi_{\theta}^{*}$ is defined by [ 24 ] : 
+
+ $\displaystyle\pi_{\theta}^{*}=\underset{\pi_{\theta}}{\text{argmax}}\;\underset{\begin{subarray}{c}\mathbf{s}_{0}\sim P(\cdot)\\
+\mathbf{u}_{t}\sim\pi_{\theta}(\cdot\mid\mathbf{h}_{t})\\
+\mathbf{s}_{t+1}\sim T(\cdot\mid\mathbf{s}_{t},\mathbf{a}_{t})\\
+\mathbf{o}_{t}\sim\widetilde{\mathcal{O}}(\cdot\mid\mathbf{s}_{t})\end{subarray}}{\mathbb{E}}\left[\sum_{t=0}^{\infty}\gamma^{t}R(\mathbf{s}_{t},\mathbf{a}_{t})\right]$ 
+
+ The optimal policy thus aims to maximize the expected return, i.e., the cumulative sum of discounted rewards, in the execution POMDP through interaction with the informed POMDP at training time. Although privileged information is used during learning, the resulting optimal policy remains independent of it at execution time. 
+
+ II-B Spaces 
+
+ Figure 2 : Coordinate systems. A quadcopter pitched forward – shown as a cross with four circles – with a camera pitched upward, is shown flying toward the gate at the bottom left. Subscripts indicate the reference frames: $w$ - world frame, $g$ - gate frame, $b$ - body frame, and $c$ - camera frame. Image not to scale, the axes of the frames are not necessarily aligned. 
+
+ The state space $\mathcal{S}$ consists of states $\mathbf{s}$ which are defined as: 
+
+ $\displaystyle\mathbf{s}=[\mathbf{p}_{w},\mathbf{p}_{g},\mathbf{v}_{w},\mathbf{v}_{g},\boldsymbol{\lambda},\boldsymbol{\Omega},\boldsymbol{\omega},\mathbf{c}_{e},\mathbf{d},\boldsymbol{\varepsilon},\mathbf{f}]^{\top}$ 
+
+ where the associated coordinate systems all follow a north–east–down (NED) convention illustrated in Figure 2 , and the components of $\mathbf{s}$ are described below: 
+
+ • 
+
+ position : 
+
+ – 
+
+ $\mathbf{p}_{w}=[x_{w},y_{w},z_{w}]^{\top}$ : position in world frame 
+
+ – 
+
+ $\mathbf{p}_{g}=[x_{g},y_{g},z_{g}]^{\top}$ : position in gate frame, updated upon passing each gate. The gate frame is a local coordinate system attached to the next gate, which is updated each time a gate is passed and is also shown in Figure 2 
+
+ • 
+
+ velocity: 
+
+ – 
+
+ $\mathbf{v}_{w}=[v_{x,w},v_{y,w},v_{z,w}]^{\top}$ : velocity in world frame 
+
+ – 
+
+ $\mathbf{v}_{g}=[v_{x,g},v_{y,g},v_{z,g}]^{\top}$ : velocity in gate frame 
+
+ • 
+
+ orientation $\boldsymbol{\lambda}=[\phi_{w},\theta_{w},\psi_{w},\psi_{g}]^{\top}$ in $\psi\rightarrow\theta\rightarrow\phi$ order 
+
+ – 
+
+ $\phi_{w}$ , $\theta_{w}$ : roll and pitch in world frame 
+
+ – 
+
+ $\psi_{w}$ : yaw in world frame 
+
+ – 
+
+ $\psi_{g}$ : yaw in gate frame 
+
+ • 
+
+ body rates $\boldsymbol{\Omega}=[p,q,r]^{T}$ are the roll, pitch and yaw rate in body frame respectively 
+
+ • 
+
+ propeller speeds $\boldsymbol{\omega}=[\omega_{1},\omega_{2},\omega_{3},\omega_{4}]^{T}$ are the angular velocities of the four propellers 
+
+ • 
+
+ camera extrinsics $\mathbf{c}_{e}=[\phi_{c},\theta_{c},\psi_{c}]$ 
+describes the euler rotation from body to camera frame in $\psi\rightarrow\theta\rightarrow\phi$ order 
+
+ • 
+
+ dynamic parameters $\mathbf{d}$ are randomized dynamical parameters of the drone described in subsection II-D 
+
+ • 
+
+ disturbances $\boldsymbol{\varepsilon}=[\boldsymbol{\varepsilon}_{a},\boldsymbol{\varepsilon}_{M},\boldsymbol{\varepsilon}_{u}]^{\top}$ 
+
+ – 
+
+ $\boldsymbol{\varepsilon}_{a}=[\varepsilon_{a,x},\varepsilon_{a,y},\varepsilon_{a,z}]^{\top}$ : acceleration disturbances 
+
+ – 
+
+ $\boldsymbol{\varepsilon}_{M}=[\varepsilon_{M,x},\varepsilon_{M,y},\varepsilon_{M,z}]^{\top}$ : moment disturbances 
+
+ – 
+
+ $\boldsymbol{\varepsilon}_{u}=[\varepsilon_{u,1},\varepsilon_{u,1},\varepsilon_{u,3},\varepsilon_{u,4}]$ : action disturbances 
+
+ • 
+
+ flight plan vector $\mathbf{f}$ indicating the relative position between gates, detailed in subsection II-H . 
+
+ The privileged observations are given by $\mathbf{o}_{t}^{+}=[\mathbf{p_{w}},\mathbf{p_{g}},\mathbf{v_{w}},\mathbf{v_{g}},\boldsymbol{\lambda},\boldsymbol{\Omega},\boldsymbol{\omega},\mathbf{c}_{e},\mathbf{d}]^{T}$ , where it should be noted that $\boldsymbol{\omega}$ and $\boldsymbol{\Omega}$ represent the ground-truth rates, not the measured ones. The observations are $\mathbf{o}_{t}=[\mathbf{X},\hat{\boldsymbol{\Omega}},\hat{\boldsymbol{\omega}}]^{T}$ , where $\mathbf{X}\in\{0,1\}^{H\times W}$ is a binary segmentation mask of the gates, generated by the segmentation model described in subsection II-E , $\hat{\boldsymbol{\Omega}}$ are the body rates measured by the inertial measurement unit (IMU), and $\hat{\boldsymbol{\omega}}$ are the propeller angular velocities measured by the electronic speed controller (ESC). We do not use the accelerometer, motivated by the observation of Bahnam et al. [ 2 ] that it tends to saturate on the used physical platform under high accelerations and vibrations. We define the information variable as $\mathbf{i}_{t}=\{\mathbf{o}_{t},\mathbf{o}_{t}^{+}\}\setminus\{\mathbf{X}$ }, where the binary segmentation mask is excluded since its information is fully captured in $\mathbf{o}_{t}^{+}$ , and thus still satisfies the conditional dependence of $\boldsymbol{o}_{t}$ on $\boldsymbol{s}_{t}$ . Moreover, including it would significantly slow down training. 
+
+ Lastly, the actions are given by $\mathbf{u}_{t}=[u_{1},u_{2},u_{3},u_{4}]^{\top}$ , which represent the normalized motor commands for each rotor, where $u_{i}\in[0,1]$ . These commands directly specify the desired motor power fraction, which the ESC regulates with pulse-width modulation (PWM), without any intermediate inner-loop controller, providing maximal control authority over the physical platform for high-speed, agile flight. 
+
+ II-C Reward function 
+
+ In RL, the reward function is a key component, hand-designed to reflect the task objective. It encodes both the goals and constraints of the task, assigning positive rewards for desirable behavior and penalizing undesirable actions. Similar to Ferede et al. [ 16 ] , our reward function consists of a progress reward, rate penalty and gate reward, and is given by: 
+
+ $\displaystyle r_{t}$ 
+ $\displaystyle=5\cdot r_{\text{prog}}-r_{\text{rate}}+30\cdot r_{\text{gate}}$ 
+
+ $\displaystyle r_{\text{rate}}$ 
+ $\displaystyle=\frac{1}{2\cdot f_{c}\cdot 10^{5}}\left(\exp\left(\min\left(\|\boldsymbol{\Omega}_{t}\|_{1},\,17\right)\right)-1\right)$ 
+
+ $\displaystyle r_{\text{prog}}$ 
+ $\displaystyle=\|\mathbf{p}_{t-1,g}\|_{2}-\|\mathbf{p}_{t,g}\|_{2}$ 
+
+ $\displaystyle r_{\text{gate}}$ 
+ $\displaystyle=\begin{cases}1-\dfrac{\max\left(|y_{t,g}|,\,|z_{t,g}|\right)}{d_{g}},&\begin{subarray}{c}\text{if gate}\\
+\text{passed}\end{subarray}\\
+0,&\begin{subarray}{c}\text{otherwise}\end{subarray}\end{cases}$ 
+
+ where $f_{c}=90\,\text{Hz}$ is the control frequency of the policy, and $r_{\text{rate}}$ is a rate penalty designed to discourage excessive angular velocities, which helps prevent both gyroscope saturation and excessive motion blur in the onboard camera. The term $r_{\text{gate}}$ provides an additional reward upon successfully passing through a gate, where $d_{g}$ is the effective size of the gate, with the reward being maximal at the center of the gate and decreasing linearly to zero toward its edges. 
+
+ To account for the thickness of the gate and the size of the drone, we introduce a pre-gate and post-gate , which are non-rendered virtual gates located at a specified distance before and after the gate, respectively. These gates provide the same reward $r_{\text{gate}}$ and collectively act as collision volumes with shaped rewards, spanning a total thickness $t_{g}$ . 
+
+ The term $r_{\text{prog}}$ is a progress reward that encourages the drone to move toward the next pre-gate, serving as a dense shaping signal to accelerate training. Importantly, this term does not enforce a specific trajectory: any path toward the next gate results in the same accumulated return. For ease of implementation, the progress reward is set to zero between the pre- and post-gate. 
+
+ Crucially, unlike Geles et al. [ 4 ] and Xing et al. [ 5 ] but similar to Romero et al. [ 6 ] and Krinner et al. [ 7 ] , there is no explicit perception reward. We observe that the resulting policy naturally learns to orient its camera toward the gates to maximize gate visibility. Additionally, unlike Ferede et al. [ 16 ] , we do not include a penalty for gate collisions. In our experiments, such penalties were found to hinder the learning process and provided no benefit compared to the natural truncation of the discounted return caused by an episode termination on collision. 
+
+ Finally, an episode is terminated if any of the following conditions are met: 
+
+ Gate collision: 
+ $\displaystyle\quad\begin{cases}\frac{\max\left(|y_{t,g}|,\,|z_{t,g}|\right)}{d_{g}}>1,&\begin{subarray}{c}\text{if gate}\\
+\text{passed}\end{subarray}\\
+\texttt{false},&\begin{subarray}{c}\text{otherwise}\end{subarray}\\
+\end{cases}$ 
+
+ Ground collision: 
+ $\displaystyle z_{w}>-0.5\;\land\;\big(v_{z,w}>1.0$ 
+
+ $\displaystyle\lor\;|\phi_{w}|>\frac{\pi}{3}\;\lor\;|\theta_{w}|>\frac{\pi}{3}\big)$ 
+
+ where $z_{w}=0$ denotes the ground plane. Episodes terminating due to either condition result in a final reward of zero. The gate collision condition also applies to pre- and post-gates. The ground collision condition is shaped to discourage fast flight with high pitch or roll near the ground. This is discouraged as the drone starts from a raised podium in the real world, and such contact forces are not simulated. Using this shaped collision condition, the drone learns to ascend first before accelerating forward, rather than immediately flying toward the gate. 
+
+ II-D Quadcopter dynamics 
+
+ Since the policy is trained in simulation, accurate modeling of the quadcopter dynamics is crucial, particularly because motor commands are executed directly. Our dynamics model largely builds on the frameworks from Bahnam et al. [ 2 ] and Ferede et al. [ 16 ] ; for full details, we refer the reader to those sources. Following the approach of Bahnam et al. [ 2 ] , we represent the rotation described by $\boldsymbol{\lambda}$ using quaternions $\mathbf{q}=[q_{w},q_{x},q_{y},q_{z}]^{T}$ and incorporate gyroscopic effects. Furthermore, we introduce additional disturbances $\boldsymbol{\varepsilon}$ : 
+
+ $\displaystyle\dot{\mathbf{x}}_{w}$ 
+ $\displaystyle=\mathbf{v}_{w}$ 
+
+ $\displaystyle\dot{\mathbf{q}}$ 
+ $\displaystyle=\frac{1}{2}\mathbf{q}\otimes[0\;p\;q\;r]^{T}$ 
+
+ $\displaystyle\dot{\mathbf{v}}_{i}$ 
+ $\displaystyle=g\mathbf{e}_{3}+\mathbf{R}(\boldsymbol{\lambda})\mathbf{F}+\boldsymbol{\varepsilon}_{a}$ 
+
+ $\displaystyle\dot{\boldsymbol{\Omega}}$ 
+ $\displaystyle=\mathbf{M}+\boldsymbol{\varepsilon}_{M}$ 
+
+ $\displaystyle\omega_{i}$ 
+ $\displaystyle=\frac{\omega_{ci}-\omega_{i}}{\tau}$ 
+
+ where $\mathbf{R}$ is the rotation matrix and $g$ is the gravitational acceleration constant. The forces $\mathbf{F}$ , moments $\mathbf{M}$ and steady motor response $w_{ci}$ are given by: 
+
+ $\displaystyle\mathbf{F}=\begin{bmatrix}-k_{x}v^{B}_{x}\sum_{i=1}^{4}\omega_{i}-k_{x2}v^{B}_{x}|v^{B}_{x}|\\
+-k_{y}v^{B}_{y}\sum_{i=1}^{4}\omega_{i}-k_{y2}v^{B}_{y}|v^{B}_{y}|\\
+-k_{\omega}\left(1+k_{\alpha}\alpha+k_{\text{hor}}\mu_{xx,yy}\right)\sum_{i=1}^{4}\omega_{i}^{2}-k_{v2}v^{B}_{z}|v^{B}_{z}|\end{bmatrix}$ 
+
+ with 
+
+ $\displaystyle\alpha=\tan^{-1}\Big(\frac{v^{B}_{z}}{r\bar{\omega}}\Big)\quad\quad\quad\quad\quad\quad$ 
+
+ $\displaystyle\mu_{xx,yy}=\tan^{-1}\Big(\frac{v^{B2}_{x}+v^{B2}_{y}}{r\bar{\omega}}\Big)\quad\text{with}\quad\bar{\omega}=\sum_{i=1}^{4}\omega_{i}$ 
+
+ $\displaystyle\boldsymbol{M}=\begin{bmatrix}-k_{p1}\omega_{1}^{2}-k_{p2}\omega_{2}^{2}+k_{p3}\omega_{3}^{2}+k_{p4}\omega_{4}^{2}+J_{x}qr\\
+-k_{q1}\omega_{1}^{2}+k_{q2}\omega_{2}^{2}-k_{q3}\omega_{3}^{2}+k_{q4}\omega_{4}^{2}+J_{y}pr\\
+-k_{r1}\omega_{1}+k_{r2}\omega_{2}+k_{r3}\omega_{3}-k_{r4}\omega_{4}-\\
+k_{r5}\dot{\omega}_{1}+k_{r6}\dot{\omega}_{2}+k_{r7}\dot{\omega}_{3}-k_{r8}\dot{\omega}_{4}+J_{z}pq\end{bmatrix}$ 
+
+ $\displaystyle\omega_{ci}=(\omega_{\text{max}}-\omega_{\text{min}})\sqrt{k\tilde{u_{i}}^{2}+\left(1-k_{l}\right)\tilde{u_{i}}}+\omega_{\text{min}}$ 
+
+ with 
+
+ $\displaystyle\tilde{u_{i}}=\min\left(\max\left(u_{i}+\varepsilon_{u,i},0\right),1\right)\quad\quad\quad$ 
+
+ where $v_{x,b}$ , $v_{y,b}$ and $v_{z,b}$ are the velocity components in body frame. 
+
+ The values of the parameters used for both policy training and simulation experiments are given in Table II . These parameters together make up the previously mentioned dynamics parameters $\mathbf{d}=[k_{w},k_{x},k_{y},\dots,\omega_{\text{max}},k,\tau]^{T}$ . The simulation is implemented using JAX in Python, and is discretized using fourth-order Runge–Kutta integration with a timestep of $2.2\,\text{ms}$ . 
+
+ Table II : Quadcopter dynamical parameters used for both policy training and simulation experiments. 
+
+ Param 
+ Value 
+ Param 
+ Value 
+
+ $k_{w}$ 
+ $1.55\times 10^{-6}$ 
+ $k_{x2}$ 
+ $4.10\times 10^{-3}$ 
+
+ $k_{x}$ , $k_{y}$ 
+ $5.37\times 10^{-5}$ 
+ $k_{y2}$ 
+ $1.51\times 10^{-2}$ 
+
+ $k_{\text{angle}}$ 
+ $3.145$ 
+ $k_{\text{hor}}$ 
+ $7.245$ 
+
+ $k_{v2}$ 
+ $0.00$ 
+ $J_{x}$ 
+ $-0.89$ 
+
+ $J_{y}$ 
+ $0.96$ 
+ $J_{z}$ 
+ $-0.34$ 
+
+ $\omega_{\min}$ 
+ $341.75$ 
+ $\omega_{\max}$ 
+ $3100.00$ 
+
+ $k$ 
+ $0.50$ 
+ $\tau$ 
+ $0.03$ 
+
+ $k_{p1}$ 
+ $4.99\times 10^{-5}$ 
+ $k_{p2}$ 
+ $3.78\times 10^{-5}$ 
+
+ $k_{p3}$ 
+ $4.82\times 10^{-5}$ 
+ $k_{p4}$ 
+ $3.83\times 10^{-5}$ 
+
+ $k_{q1}$ 
+ $2.05\times 10^{-5}$ 
+ $k_{q2}$ 
+ $2.46\times 10^{-5}$ 
+
+ $k_{q3}$ 
+ $2.02\times 10^{-5}$ 
+ $k_{q4}$ 
+ $2.57\times 10^{-5}$ 
+
+ $k_{r1}$ – $k_{r4}$ 
+ $3.38\times 10^{-3}$ 
+ $k_{r5}$ – $k_{r8}$ 
+ $3.24\times 10^{-4}$ 
+
+ II-E Segmentation masks 
+
+ As pixel level input, SkyDreamer receives a segmentation mask $\mathbf{X}$ . Unlike the extrinsic parameters, we choose to calibrate the intrinsic parameters of the camera to maintain a consistent camera matrix for SkyDreamer’s inputs, as they are straightforward to obtain and remain constant over time. Using these calibrated intrinsics, the RGB images are undistorted, cropped, and mapped to a fixed-resolution image of size $H\times W$ , such that the resulting image satisfies a nominal pinhole camera model with intrinsic matrix: 
+
+ $\mathbf{K}=\begin{bmatrix}f_{x}&0&c_{x}\\
+0&f_{y}&c_{y}\\
+0&0&1\end{bmatrix}=\begin{bmatrix}\frac{25}{64}W&0&0.5W\\
+0&\frac{25}{64}H&0.5H\\
+0&0&1\end{bmatrix},$ 
+
+ where $f_{x}$ and $f_{y}$ are the focal lengths in pixels and $c_{x}$ , $c_{y}$ are the principal point coordinates in pixels. The factor $\frac{25}{64}$ is empirically chosen such that an image of $64\times 64$ pixels corresponds to a focal length of $25$ , providing a balanced field of view that maximizes scene coverage while avoiding black borders in the undistorted images. By mapping all images to a shared nominal intrinsic matrix and randomizing extrinsic parameters during training, SkyDreamer ensures robustness to extrinsic variations and invariance to intrinsic parameters through calibration, enabling generalization of the same model across different drones. 
+
+ Subsequently, the fixed-resolution image is passed to a segmentation model called GateNet that produces a binary segmentation mask $\mathbf{X}\in\{0,1\}^{H\times W}$ , indicating which pixels correspond to gates. GateNet follows a U-Net architecture, similar to the designs used in De Wagter et al. [ 30 ] and Bahnam et al. [ 2 ] of which the implementation details are provided in Appendix A . The resulting masks are resized to a resolution of $64\times 64$ to speed up the training process of SkyDreamer. 
+
+ II-F Visual augmentations 
+
+ During training, segmentation masks are rendered in batches using PyTorch3D. However, these masks are idealized and differ significantly from real-world masks, causing a large visual sim-to-real gap. To bridge this gap, we employ CycleGAN [ 31 ] , a generative adversarial network (GAN) that learns to translate images between two unpaired domains, in our case, from synthetic segmentation masks to more realistic masks and vice versa, without requiring paired real and rendered masks. 
+
+ To further improve realism, we use a stochastic CycleGAN (StochGAN) [ 32 ] , an extension of CycleGAN that adds noise to the inputs. This stochasticity enhances the variation and realism of generated masks, better approximating real-world appearance and variance. Although Almahairi et al. [ 32 ] also proposes a more advanced AugmentedGAN, we opted for StochGAN due to its simpler implementation and effective performance. The GAN is trained on approximately 4000 unpaired real and rendered images, which require no manual labeling and are therefore inexpensive to collect. Further implementation details are provided in Appendix B . 
+
+ We observed that real-life masks were often thinner, a detail not captured well by the GAN alone. To address this, we randomly erode the masks by $1$ pixel – using average pooling followed by thresholding – $50\%$ of the time at a mask resolution of $64\times 64$ , introducing variation in the mask thickness. Since the erosion level typically remains stable over short periods, we hold it fixed for an average of $100$ environment steps. 
+
+ Lastly, to simulate the rolling shutter effect of the onboard camera, we account for two dominant effects: a horizontal shear induced by the yaw rate in camera frame, and a vertical scaling induced by the pitch rate. These arise from the line-by-line capture of a rolling shutter camera under rotational motion. To model these effects, we introduce a rolling shutter parameter $s\in[0,0.02]$ , which also aims to capture additional disturbances associated with rolling shutter through randomization. 
+
+ We formalize our approximation of the rolling shutter effect with an affine transformation given by the following matrix: 
+
+ $\displaystyle\mathbf{A}=\begin{bmatrix}1&-s\,r_{c}&\tfrac{W}{2}\,s\,r_{c}\\
+0&1+s\,q_{c}&-\tfrac{H}{2}\,s\,q_{c}\end{bmatrix},$ 
+
+ where $r_{c}$ and $q_{c}$ denote the yaw and pitch rates in the camera frame, respectively. This transformation is then applied to the rendered segmentation mask: 
+
+ $\displaystyle\mathbf{X}^{\prime}=\operatorname{warp\_affine}(\mathbf{X},\mathbf{A})$ 
+
+ which produces a horizontally sheared and vertically scaled segmentation mask. 
+
+ II-G SkyDreamer architecture 
+
+ (a) Standard DreamerV3 architecture for ADR. In standard DreamerV3, the world model is not guided by privileged observations $\mathbf{o}_{t}^{+}$ . 
+
+ (b) SkyDreamer at deployment. The dynamics predictor is not used, as observations are always available. The flight plan vector is updated based on the decoded states as indicated by the cyan arrow. 
+
+ (c) SkyDreamer during world model learning. The dynamics predictor is trained to match the encoded inputs. Additionally, the sequence model, encoder, decoder, reward predictor, and continue predictor are trained. 
+
+ (d) SkyDreamer during actor-critic learning. The dynamics predictor replaces the encoder to generate imagined rollouts. 
+
+ Figure 3 : Comparison of standard DreamerV3 and SkyDreamer across different stages. The world model encodes segmentation masks and measurements such as motor RPMs, body rates, and the flight plan vector into discrete representations $z_{t}$ . The next hidden state $h_{t+1}$ is predicted from the previous hidden state $h_{t}$ , action $a_{t}$ and discrete representation $z_{t}$ using the sequence model. The inputs $\hat{x}_{t}$ are reconstructed to guide the hidden representations. In SkyDreamer, the privileged observations, including ground-truth state, camera and dynamical parameters, are decoded as $\mathbf{o}_{t}^{+}$ . During actor-critic learning, imagined rollouts are generated solely using the dynamics predictor without feedback from the environment. Images inspired by Hafner et al. [ 19 ] . 
+
+ SkyDreamer’s architecture is almost entirely based on Informed Dreamer [ 24 ] , which is largely based on DreamerV3 [ 19 ] . In this section, we provide a high level overview and intuitive explanation of the architecture most relevant to our work. For detailed information on the architecture, policy learning and loss functions, we refer the reader to Hafner et al. [ 19 ] and Lambrechts et al. [ 24 ] . 
+
+ The core component of DreamerV3 is its world model, which encodes observations into a latent representation and predicts future latent states based on actions, both with and without receiving further observations. The training process continuously alternates between three main stages: (1) data collection, (2) world model learning, and (3) actor-critic learning, which are illustrated in Figure 3 . In the data collection phase, the current policy interacts with the environment to collect rollouts, which are stored in a replay buffer, making DreamerV3 an off-policy algorithm. During world model learning, batches of trajectories are uniformly sampled from the replay buffer to train the world model. Finally, in the actor-critic phase, learning occurs entirely through latent imagination: the world model simulates rollouts without environment feedback, enabling sample efficient model-based RL. All components of SkyDreamer are implemented as multi-layer perceptrons (MLPs), unless otherwise noted. 
+
+ The key element of the world model in DreamerV3 is a recurrent state-space model (RSSM), which consists of the following components: 
+
+ Encoder: 
+ $\displaystyle\quad\mathbf{z_{t}}\sim q^{e}_{\theta}(\cdot|\mathbf{h}_{t},\mathbf{o}_{t})$ 
+
+ Sequence model: 
+ $\displaystyle\quad\mathbf{h_{t}}=f^{e}_{\theta}(\mathbf{h}_{t-1},\mathbf{z}_{t-1},\mathbf{u}_{t-1})$ 
+
+ Dynamics predictor: 
+ $\displaystyle\quad\hat{\mathbf{z}_{t}}\sim p_{\theta}^{d}(\cdot|\mathbf{h_{t}})$ 
+
+ Here, $q^{e}_{\theta}$ is the encoder , which encodes the observation $\mathbf{o}_{t}$ along with the hidden state $\mathbf{h}_{t}$ into a discrete stochastic latent representation $\mathbf{z}_{t}$ . This structure resembles a vector-quantized variational autoencoder (VQ-VAE) [ 33 ] . For image observations, it uses a convolutional neural network (CNN) rather than an MLP. The function $f^{e}_{\theta}$ is the sequence model , implemented as a single-layer gated recurrent unit (GRU) [ 34 ] , which predicts the next hidden state $\mathbf{h}_{t}$ given the previous hidden state $\mathbf{h}_{t-1}$ , previous latent state $\mathbf{z}_{t-1}$ , and previous action $\mathbf{u}_{t-1}$ . Finally, $p^{d}_{\theta}$ is the dynamics predictor , which predicts an estimate of the latent representation $\hat{\mathbf{z}}_{t}$ based solely on the hidden state $\mathbf{h}_{t}$ . This component is crucial, as it allows the model to roll out future trajectories in latent space without further observations from the environment, which is often referred to as latent imagination or dreaming and is illustrated in 3d . 
+
+ The RSSM also employs a decoder to guide the learning process. Crucially, following informed Dreamer [ 24 ] , SkyDreamer decodes to the privileged information $\mathbf{i}_{t}$ rather than only the raw observations $\mathbf{o}_{t}$ : 
+
+ Decoder: 
+ $\displaystyle\mathbf{i}_{t}\sim p_{t}^{i}(\cdot|\mathbf{h_{t}},\mathbf{z_{t}})$ 
+
+ By decoding to this privileged information, the world model is encouraged to extract more meaningful and task-relevant features from the inputs. This key difference from standard DreamerV3 is visually evident when comparing 3a and 3c . In addition to improving learning speed, final performance and adaptability to drone-specific parameters, this also results in a more interpretable world model. Whereas decoding to images often leads to blurry reconstructions, decoding to states such as position, velocity, and attitude allows a direct inspection of what the world model believes the current state to be. 
+
+ Additionally, this interpretability offers a significant practical advantage during debugging: state estimation related errors can be identified and resolved without additional real-world flights. Instead, one can replay with an updated world model using the same sequence of observations and actions to verify potential improvements. This greatly accelerates the iteration cycle when addressing vision-related sim-to-real transfer issues, a common challenge in end-to-end vision-based learning approaches. 
+
+ To support actor-critic learning during latent imagination, the world model is also trained to predict the reward and whether a state is terminal. This is achieved using a reward predictor $p_{\theta}^{r}$ and a continue predictor $p_{\theta}^{c}$ : 
+
+ Reward predictor: 
+ $\displaystyle\hat{r_{t}}\sim p_{\theta}^{r}(\cdot|\mathbf{h_{t}},\mathbf{z_{t}})$ 
+
+ Continue predictor: 
+ $\displaystyle\hat{c_{t}}\sim p_{\theta}^{c}(\cdot|\mathbf{h_{t}},\mathbf{z_{t}})$ 
+
+ where $p_{\theta}^{c}$ predicts the continuation probability $\hat{c_{t}}\in[0,1]$ , indicating whether the episode is expected to continue. 
+
+ During actor-critic learning, the actor is optimized using the Reinforce estimator [ 35 ] . Actor-critic learning is performed entirely in latent space through imagined rollouts, as illustrated in 3d . These rollouts begin from hidden states obtained during world model training and are propagated forward for $16$ steps ( $0.18\,\text{s}$ ) using the dynamics predictor, without any feedback from the environment. 
+
+ The actor and critic are formalized as: 
+
+ Actor: 
+ $\displaystyle\mathbf{u}_{t}\sim\pi_{\theta}(\cdot|\mathbf{h}_{t},\mathbf{z}_{t})$ 
+
+ Critic: 
+ $\displaystyle v_{\psi}(V_{t}|\mathbf{h}_{t},\mathbf{z}_{t})$ 
+
+ where the actor is implemented as a Gaussian policy with mean $\boldsymbol{\mu}_{t}=\mathbb{E}_{\pi_{\theta}}\left[\mathbf{u}_{t}|\mathbf{h}_{t},\mathbf{z}_{t}\right]$ and variance $\boldsymbol{\sigma}_{t}^{2}=\mathbb{E}_{\pi_{\theta}}\left[\left(\mathbf{u}_{t}-\boldsymbol{\mu}_{t}\right)^{2}\mid\mathbf{h}_{t},\mathbf{z}_{t}\right]$ , and the critic estimates the value of the current state, i.e. the expected discounted return $V_{t}=\sum_{\tau=0}^{\infty}\gamma^{\tau}r_{t+\tau}$ , with $\gamma=0.997$ the discount factor. 
+
+ Although the standard implementation produced performant policies in simulation, we observed that they often converged to near bang-bang behavior, where the motors are either fully activated or deactivated. While such policies can be optimal in simulation, in the real world they lead to overheating or even burning the motors. 
+
+ To mitigate this, we introduce a smoothness regularization loss inspired by Mysore et al. [ 36 ] , encouraging smoother changes in control outputs over time. However, DreamerV3 includes an entropy loss that encourages high-variance (i.e., exploratory) policies to discover new strategies. Naively applying a smoothness penalty to the full policy distribution would therefore conflict with this entropy objective. 
+
+ To avoid this conflict, we apply the smoothness loss $\mathcal{L}_{smooth}$ only to the mean of the policy and add $\mathcal{L}_{smooth}$ to the standard policy loss of DreamerV3: 
+
+ $\displaystyle\mathcal{L}_{smooth}=\lambda_{smooth}\,\mathbb{E}_{t}\left[\left|\left|\boldsymbol{\mu}_{t}-\boldsymbol{\mu}_{t-1}\right|\right|^{2}_{2}\right]$ 
+
+ where $\lambda_{smooth}=0.002$ determines the weighting of the regularization. This regularization is applied to the imagined rollouts used during actor-critic learning. At inference time and during evaluation, we use the deterministic version of the policy ( $\boldsymbol{\sigma}_{t}=0$ ) to produce even smoother control. 
+
+ II-H Flight Plan Logic 
+
+ Another key limitation of prior end-to-end vision-based ADR approaches is their inability to resolve visual ambiguities: situations where different parts of the track produce similar visual observations. To address this, we introduce a flight plan logic that provides the policy with structured information about its progress along the track, inspired by [ 13 , 16 ] . 
+
+ Specifically, the policy is augmented with a flight plan vector $\mathbf{f}$ encoding the relative positions and yaw angles of upcoming gates, without containing the drone’s current position, attitude, or any related state variables. For each of the next three gates, the input includes the difference in 3D position and yaw between gate $i$ and gate $i+1$ , along with the absolute position and yaw of gates $i$ through $i+2$ in the world frame: 
+
+ $\displaystyle\mathbf{f}_{i}=\bigl[\mathbf{p}_{i}^{g}-\mathbf{p}_{i-1}^{g},\ \boldsymbol{\psi}_{i}^{g}-\boldsymbol{\psi}_{i-1}^{g},\ \dots,\ \boldsymbol{\psi}_{i+2}^{g}-\boldsymbol{\psi}_{i+1}^{g},$ 
+
+ $\displaystyle\mathbf{p}_{i}^{g},\ \boldsymbol{\psi}_{i}^{g},\ \dots,\ \boldsymbol{\psi}_{i+2}^{g}\bigr]^{T}$ 
+
+ where $\mathbf{p}_{i}^{g}$ denotes the position and $\boldsymbol{\psi}_{i}^{g}$ the yaw angle of gate $i$ in the world frame. This flight plan vector $\mathbf{f}_{i}$ is provided as input to SkyDreamer alongside the other observations $\mathbf{o}_{t}$ . 
+
+ To determine when a gate has been passed and update the flight plan vector accordingly, we inspect the gate-relative position $\hat{\mathbf{x}}_{g}$ estimated by SkyDreamer. Once the drone has passed through the current gate, the flight plan index $i$ is incremented, which is empirically defined as: 
+
+ $\displaystyle\hat{\mathbf{x}}_{g}>-0.15\,m$ 
+
+ since the nominal threshold of $\hat{\mathbf{x}}_{g}>0.0\,m$ occasionally failed to trigger due to small state estimation errors in SkyDreamer, as observed in one real-world flight. During training, however, we do not rely on SkyDreamer’s decoded states, which are often too inaccurate in the early part of training. Instead, the flight plan index $i$ is incremented randomly between the pre- and post-gate, simulating that the index does not always increment precisely when passing the gate. 
+
+ This proposed flight plan logic not only helps resolve visual ambiguities, but also potentially enables generalization to arbitrary tracks. Moreover, it facilitates decoding to a global state in world frame under visual ambiguity or when training a single model across multiple tracks. We argue that such structured integration of track geometry is essential for developing end-to-end vision-based ADR systems capable of flying arbitrary unseen tracks with approximately known gate locations. 
+
+ III Experiments and Results 
+
+ We extensively evaluate SkyDreamer on two tracks and with two gate types, in simulation and in the real world: the ladder inverted loop track and the inverted loop track, visualized in Figure 4 and Figure 6 . During training, additional invisible gates are added to enforce the correct flight maneuvers. Both tracks highlight a common challenging drone racing maneuver at the second gate: the split-S. Within our limited $8\times 8\text{m}$ testing space, we extend this split-S into a full inverted loop to create a circular track. At the first gate, the ladder track emphasizes precise control close to a gate, while the inverted loop track tests high-speed flight through a gate. Finally, we test SkyDreamer on the big track , shown in Figure 9 , demonstrating its ability to handle more complex layouts and higher-speed flight. 
+
+ Importantly, these tracks would be difficult – or even impossible – to master for end-to-end vision-based approaches without our proposed flight plan logic: the drone encounters visually identical observations at different points along the track but require taking different flight paths, which would otherwise introduce ambiguity. By leveraging this flight plan logic, SkyDreamer learns to resolve such ambiguity in both simulation and the real world without external aid. 
+
+ III-A Experimental setup 
+
+ For our experiments, we train SkyDreamer starting from the latest JAX implementation of DreamerV3 2 2 
+ 2 
+
+ https://github.com/danijar/dreamerv3/commit/cdf570902b1eaba193cc8ef69426cd4edde1b0bc for a total of $17$ million environment steps, using the standard size12m parameter model and default hyperparameters unless otherwise noted. We set replay_context to $16$ , train_ratio to $128$ , slowtar to true , and use a replay buffer size of $10\cdot 10^{6}$ representing $31\,\text{h}$ of flight time. 
+
+ We use environment settings and initial states as specified in Table III . During training, $70\%$ of initial states are sampled from the training column, where initialization can occur in front of any gate, and $30\%$ from the evaluation column, where initialization always occurs at the start gate. 
+
+ Table III : Randomization, parameter and initial states. ”Train” refers to the settings used for collecting data that is stored in the replay buffer during training. ”Evaluation” refers to the settings used during evaluation and simulation experiments. For disturbances where a frequency is specified, 90 Hz indicates the value changes every timestep, whereas 1 Hz indicates a 1/100 probability of change per timestep. 
+
+ Parameter 
+ Train 
+ Evaluation 
+ Unit 
+
+ $\phi_{c}$ , $\psi_{c}$ 
+ $[-5,5]$ 
+ $[-5,5]$ 
+ deg 
+
+ $\theta_{c}$ 
+ $[45,55]$ 
+ $[45,55]$ 
+ deg 
+
+ $\omega_{\text{min}}$ , $\omega_{\text{max}}$ 
+ $\pm 20\%$ 
+ $\pm 20\%$ 
+ % rand 
+
+ $\mathbf{d}\setminus\{\omega_{\text{min}},\omega_{\text{max}}\}$ 
+ $\pm 30\%$ 
+ $\pm 20\%$ 
+ % rand 
+
+ $\boldsymbol{\varepsilon}_{a}\text{ (1Hz)}$ 
+ $[-3,3]$ 
+ $[-2,2]$ 
+ m/s 2 
+
+ $\boldsymbol{\varepsilon}_{M}\text{ (1Hz)}$ 
+ $[-3,3]$ 
+ $[-2,2]$ 
+ rad/s 2 
+
+ $\boldsymbol{\varepsilon}_{M}\text{ (90Hz)}$ 
+ $[-125,125]$ 
+ $[-100,100]$ 
+ rad/s 2 
+
+ $\boldsymbol{\varepsilon}_{u}\text{ (90Hz)}$ 
+ $[-0.2,0.2]$ 
+ $[-0.2,0.2]$ 
+ - 
+
+ $d_{g}$ 
+ $0.8$ 
+ $1.0$ 
+ m 
+
+ $t_{g}$ 
+ $0.8$ 
+ $0.8$ 
+ m 
+
+ Initial state 
+
+ $x_{g}$ 
+ $[-4.0,-2.0]$ 
+ $[-4.0,-2.0]$ 
+ m 
+
+ $y_{g}$ 
+ $[-1.0,1.0]$ 
+ $[-1.0,1.0]$ 
+ m 
+
+ $z_{g}$ 
+ $[0.0,1.3]$ 
+ $[0.7,1.3]$ 
+ m 
+
+ $v_{x,w}$ , $v_{y,w}$ , $v_{z,w}$ 
+ 0.0 
+ 0.0 
+ m/s 
+
+ $p$ , $q$ , $r$ 
+ $[-0.1,0.1]$ 
+ $[-0.1,0.1]$ 
+ rad/s 
+
+ $w_{i}$ 
+ $[0.25,0.5]$ 
+ $[0.25,0.5]$ 
+ $\omega_{\text{max}}$ 
+
+ $\phi_{w}$ , $\theta_{w}$ , $\psi_{g}$ 
+ $[-\pi/9,\pi/9]$ 
+ $[-\pi/9,\pi/9]$ 
+ rad 
+
+ Training is conducted in three phases on a 40GB partition with 56 Shared Multiprocessors on an NVIDIA A100 80GB GPU for roughly $50$ hours. In the initial warm-up phase, we follow the default DreamerV3 settings. After $8$ million steps, we increase the batch length for world model training from 64 to 256 to better capture long-term dependencies, which is especially useful for parameter identification. After 13 million steps, we reduce the entropy coefficient from $3\cdot 10^{-4}$ to $1\cdot 10^{-5}$ and the learning rate from $4\cdot 10^{-5}$ to $2\cdot 10^{-6}$ to stabilize and fine-tune the policy for smoother and more fine-grained control. 
+
+ Figure 4 : Simulated ladder inverted loop track flown by SkyDreamer. The flight begins by passing through the first gate, followed by a tight ladder maneuver and flying over it. SkyDreamer then flies over the second gate, performs a maneuver similar to a split-S through it, and flies back over the gate, completing the inverted loop. The lap is completed by passing through the first gate again. In the left image, the black lines indicate ground-truth trajectory, while the colored lines show SkyDreamer’s position and velocity estimates, with color denoting speed. The black blocks mark the gate locations with exaggerated thickness. The black arrows indicate the camera principal axis direction, which show that SkyDreamer naturally orients its camera toward the gates: an emergent behavior achieved without any explicit perception reward. The right image presents a 3D render of one lap flown by SkyDreamer, where the colored line represents the ground-truth trajectory and corresponding speed. 
+
+ Figure 5 : Selected SkyDreamer parameter, extrinsic, and state estimation over time for the ladder inverted loop track with orange gates. The left half of each plot shows the first 150 steps, highlighting the speed of convergence, while the right half shows the remaining 1850 steps, illustrating any drift over time. The red distribution represents the baseline, computed using the theoretical standard deviation of a uniform distribution representing the distribution of the training ranges in Table III . The green distribution shows SkyDreamer’s estimation over time, obtained by aggregating results from 20 differently initialized drones that completed a successful flight over 2000 timesteps each, following the evaluation parameter ranges from Table III . Distributions such as those for $k_{x}$ align with the baseline distribution, indicating that SkyDreamer failed to estimate these parameters. Other distributions are narrower, showing that SkyDreamer successfully estimated them on the fly. Parameters like $\omega_{\max}$ and $k_{w}$ converge quickly and remain stable over time, while parameters like $k_{p1}$ converge more slowly and show gradual drift over time. 
+
+ We deploy the learned policy onboard the same drone as in Bahnam et al. [ 2 ] (also shown in Figure 1 ) on an NVIDIA Jetson Orin NX 16GB , operating entirely autonomously without any external aid. The JAX model is first converted to PyTorch using our custom implementation, then exported to ONNX, and finally optimized and executed with TensorRT. The full policy, including encoder, sequence model, and actor, achieves an average runtime of $1.3\,\text{ms}$ in benchmark tests, while the segmentation model averages $3\,\text{ms}$ . 
+
+ The onboard camera is a low-cost rolling shutter Arducam IMX219 Wide Angle Camera 3 3 
+ 3 
+
+ https://www.arducam.com/b0179-arducam-imx219-wide-angle-camera-module-for-nvidia-jetson-board.html with a $175^{\circ}$ field of view operating at $90\,\text{Hz}$ , which sets the control frequency of the policy. All timing is anchored to the camera timestamps. During training, we simulate an image delay of $33\,\text{ms}$ and an action delay of $11\,\text{ms}$ to match deployment conditions. Motor commands are sent immediately to the flight controller with a desired execution timestamp, and sufficient buffering is implemented to handle occasional timing variability in both the policy and segmentation model. 
+
+ Two types of gates are used in our experiments: plain square orange gates with an inner size of 1.5m and an outer size of 2.7m shown in Figure 6 , similar to those in Bahnam et al. [ 2 ] , and MAVLab gates, which resemble those in De Wagter et al. [ 30 ] , with an inner size of 1.5m and an outer size of 2.1m shown in Figure 7 . 
+
+ For the orange gates, we train GateNet using only 200 manually labeled real-world images, which we find sufficient to achieve near-perfect segmentations. In contrast, the MAVLab gates are more challenging to segment due to their dark blue and black colors, thinner structure, the presence of logos, and the similarity of background textures at one side of the testing area (e.g., nearby blue machinery). For this case, we train on 700 manually labeled real-world images combined with 8,500 synthetically generated examples, following the synthetic generation procedure described in Bahnam et al. [ 2 ] . Importantly, our objective is not to optimize GateNet for peak segmentation accuracy, as illustrated by some deliberately retained suboptimal examples in Figure 7 , but rather to demonstrate that SkyDreamer can successfully cope with poor-quality visual inputs and demonstrate a non-trivial visual sim-to-real transfer. 
+
+ III-B Simulation 
+
+ In the simulation experiments, we evaluate state and parameter estimation, demonstrate interpretability and an important aspect of vision-based flight: perceptual behavior. To this end, we investigate SkyDreamer’s performance on the ladder inverted loop track with orange gates, shown in Figure 4 . This track is trained with a smaller tunnel size $t_{g}=0.3m$ , to further demonstrate SkyDreamer’s ability to execute tight maneuvers. 
+
+ Figure 4 provides a qualitative analysis of SkyDreamer’s flight and state estimation behavior. SkyDreamer’s position estimate aligns closely with the ground-truth position, indicating accurate state estimation. However, the estimated states exhibit small, high-frequency jumps around the ground truth. We hypothesize that this behavior may arise from the discretized nature of the input representations $\mathbf{z}_{t}$ . Another possible contributing factor is that the world model may not fully capture the underlying physics, as observed in similar settings [ 37 ] . 
+
+ The maneuvers themselves are tight: SkyDreamer completes the ladder while remaining mostly within $1\,\text{m}$ of the gate and executes the inverted loop in an almost perfect circle with a radius of roughly $1.5\,\text{m}$ , closely matching the separation between the actual gate and the virtual gate of $2.7\,\text{m}$ . Speeds reach up to $13\,\text{m/s}$ and accelerations up to $6\,\text{g}$ within a confined area of just $6\times 4\,\text{m}$ , demonstrating both agility and high-speed flight. 
+
+ The tightness and speed of these maneuvers do not come at the expense of perceptual behavior. The arrows in Figure 4 indicating the camera principal axis show that SkyDreamer consistently focuses on the gates to maximize gate visibility, despite the absence of a perception reward. This emergent behavior, also observed in Romero et al. [ 6 ] , is thus evident even in more complex maneuvers such as the ladder and inverted loop. 
+
+ Figure 6 : Real-world inverted loop track flown by SkyDreamer. The flight begins by passing through the first gate. SkyDreamer then flies over the second gate, performs a maneuver similar to a split-S through it, and flies back over the gate, completing the inverted loop. The lap is completed by passing through the first gate. In the plots, the black lines indicate ground-truth positions obtained using MoCap as a reference, which were not used by SkyDreamer. The colored lines show the position and velocity estimates of SkyDreamer, with color denoting speed. The black blocks mark the gate locations with exaggerated thickness. The black arrows indicate the camera principal axis direction, which show that SkyDreamer naturally orients its camera toward the gates: an emergent behavior achieved without an explicit perception reward. The right image shows a composite image of five laps flown by SkyDreamer in the real world. The overlaid trajectories of all five laps converge at the center points of the gates, visually demonstrating that SkyDreamer consistently flies through the center of each gate. 
+
+ Figure 7 : Real-world inverted loop track with MAVLab gates flown by SkyDreamer. The flight begins by passing through the first gate. SkyDreamer then flies over the second gate, performs a maneuver similar to a split-S through it, and flies back over the gate, completing the inverted loop. The lap is completed by passing through the first gate. In the plots, the colored lines show the position and velocity estimates of SkyDreamer, with color denoting speed. The black blocks mark the gate locations with exaggerated thickness. Below the plots, selected suboptimal segmentations produced by GateNet are shown, with their corresponding locations indicated by the numbers. Red pixels denote regions classified as gates by GateNet. MoCap data could not be recorded during this flight due to technical issues, so ground-truth positions are unavailable. The right image shows a composite image of one lap flown by SkyDreamer in the real world. 
+
+ Figure 5 shows SkyDreamer’s state and parameter estimation over time. Some dynamical parameters are estimated better than others: while drag ( $k_{x}$ ) is difficult to estimate, performance is moderate for individual propeller responses in roll ( $k_{p1}$ ) and pitch ( $k_{q1}$ ). Parameters such as yaw effectiveness (e.g., $k_{r1}$ ) are not accurately estimated. 
+
+ However, SkyDreamer excels at identifying two parameters that are crucial for thrust response: the thrust effectiveness $k_{w}$ and maximum motor RPM $\omega_{\max}$ . Correct estimation of these parameters enables SkyDreamer to perform high-speed maneuvers and tight cornering tailored to the specific drone despite domain randomization, similar to Origer et al. [ 12 ] . Other parameters, such as the motor response $\tau$ , are also estimated accurately. 
+
+ Overall, parameters that have a direct and strong effect on the drone’s inputs, like $\omega_{\text{max}}$ , are estimated most accurately, whereas parameters with smaller long-term effects or those affecting only a single motor are more challenging to estimate. 
+
+ In addition to its final flight performance, the estimated parameters converge quickly within the first $50$ – $100$ steps ( $0.6\,\text{s}$ to $1.1\,\text{s}$ ) – before the drone passes through the first gate – enabling SkyDreamer to fly safely and at high speed from the start. Some parameters, however, exhibit drift in the mean of their distributions over time, indicating that the sequence length used during world model learning ( $256$ steps) does not necessarily generalize to the longer sequences encountered during flight ( $2000$ steps). It should however be noted that the accuracy of parameter identification depends on the training run: some runs yield more precise estimates, while others exhibit lower accuracy and can show significant drift over time, without resulting in a significant loss of flight performance. 
+
+ SkyDreamer also estimates the camera extrinsics over time. Convergence is slightly slower than for some dynamical parameters, but it reaches a standard deviation of roughly $1^{\circ}$ over time, indicating accurate on the fly estimation of the camera’s extrinsics. Notably, the pitch angle of the camera is estimated most accurately, while the roll angle is slightly less accurate, though the difference is marginal. 
+
+ Finally, we evaluate the estimation of position and velocity over time – two of the most important yet challenging state variables for classical methods [ 2 ] . Despite randomized initial positions, the estimates converge quickly, within at most 10 steps, to the nominal distribution, with a typical standard deviation of only $10-15\,\text{cm}$ across the randomized drones, remaining centered over time. Velocity estimates are also accurate, with a standard deviation of approximately $0.5\,\text{m/s}$ in all axes, and remain centered around zero, indicating no drift over time. 
+
+ III-C Real-world small tracks 
+
+ Figure 8 : Real-world battery degradation over five laps of the inverted loop track with orange gates. The heatmap shows measured motor RPMs over time, where brighter regions indicate higher occurrence at a given timestamp. The red line denotes the maximum RPM estimated by SkyDreamer, $\hat{\omega}_{\max}$ . The left-hand plot indicates a fully charged battery which is not excessively discharged, while the right-hand plot depicts a battery undergoing excessive discharge, resulting in reduced RPM toward the end of the flight. However, SkyDreamer accounts for this, correctly estimates $\hat{\omega}_{\max}$ , adjusts its flight path accordingly and successfully completes all five laps with inverted loops. 
+
+ In the first real-world experiments, we evaluate SkyDreamer’s sim-to-real transfer, robustness, and performance across three small tracks: the inverted loop with both orange and MAVLab gates ( Figure 6 and Figure 7 ), and the ladder inverted loop track with orange gates, which uses the model from the same training run as the simulation experiments ( Figure 4 ). 
+
+ Table IV summarizes SkyDreamer’s performance on these tracks. For each track, we conduct five flights of five laps each, resulting in $25$ laps per track and $75$ laps in total. SkyDreamer successfully completes all laps without crashing. For the orange inverted loop track, one flight was performed with a degrading battery, leading to a higher average lap time and a larger standard deviation. Nevertheless, SkyDreamer still successfully completed all five laps. During these flights, SkyDreamer reached measured accelerations of up to $6\,\text{g}$ and estimated speeds of up to $13\,\text{m/s}$ , demonstrating impressive agility with flight areas typically confined to $6\times 6\,\text{m}$ . 
+
+ Table IV : Success rates and lap times for the real-world small tracks flown without external aid. All tracks achieved 100% success over five flights, with five laps per flight. The $\pm$ indicates the standard deviation, which is higher for the inverted loop (orange) track due to one flight with a partially charged battery. One flight on the ladder loop track was excluded because the flight plan condition $\hat{\mathbf{x}}_{g}>0.0\,\text{m}$ never triggered, resulting in an aborted flight; the condition was subsequently adjusted to $\hat{\mathbf{x}}_{g}>-0.15\,\text{m}$ . For the MAVLab gates, a part of the environment resembling a gate had to be covered, as GateNet consistently misclassified it. 
+
+ Metric 
+
+ Loop 
+
+ (orange) 
+
+ Ladder 
+ loop 
+ (orange) 
+
+ Loop 
+
+ (MAVLab) 
+
+ Success rate 
+ 100% 
+ 100% 
+ 100% 
+
+ Number of flights 
+ 5 
+ 5 
+ 5 
+
+ Laps per flight 
+ 5 
+ 5 
+ 5 
+
+ From start [s] 
+ 17.03 ± 0.76 
+ 18.87 ± 0.23 
+ 15.56 ± 0.20 
+
+ From first gate [s] 
+ 16.36 ± 0.77 
+ 18.24 ± 0.22 
+ 14.88 ± 0.20 
+
+ Lap 1 [s] 
+ 3.37 ± 0.08 
+ 3.78 ± 0.09 
+ 2.99 ± 0.07 
+
+ Lap 2–5 [s] 
+ 3.25 ± 0.22 
+ 3.62 ± 0.06 
+ 2.97 ± 0.08 
+
+ To demonstrate SkyDreamer’s parameter estimation in the real world, Figure 8 illustrates its performance during flights with and without a fully charged battery. The figures show that the maximum RPM estimated by SkyDreamer, $\hat{\omega}_{\text{max}}$ , closely follows the actual measured RPMs, even though it was never trained with non-constant parameters. By the final lap, the maximum RPM drops from 3200 rad/s to 2200 rad/s, a 30% reduction, well outside the training randomization bounds of [2480, 3720] rad/s. Despite this, SkyDreamer detects the change, adapts its flight path, and still completes several inverted loops. This demonstrates that online parameter estimation allows SkyDreamer to adapt on the fly, maintaining both safety and agility despite a significant loss of maximum available thrust. 
+
+ In addition to estimating parameters, Figure 6 shows that the state estimation transfers well to the real world, where SkyDreamer’s state estimates only show a slight offset to the MoCap positions in the $xy$ -plane, and an almost perfect overlap in the $yz$ -plane during the loop. The figure also reveals that SkyDreamer takes less tight loops compared to the ladder inverted loop track, which can be attributed to the larger tunnel size ( $t_{g}=0.8$ m), forcing it to take wider turns. 
+
+ To visually illustrate SkyDreamer’s flight path and consistency, Figure 6 shows a composite image of five laps on the inverted loop track. Remarkably, the trajectories from all five laps converge closely to each other and to the center of the gates, demonstrating that SkyDreamer navigates both consistently and safely. 
+
+ While SkyDreamer generalizes well with orange gates – whose high contrast and uniform appearance yield near-perfect segmentation masks closely matching the non-augmented rendered ones – we also evaluate it with MAVLab gates. For these, GateNet’s performance degrades due to poor lighting, low contrast, and distracting background elements such as machinery that visually resemble gates. As shown in Figure 7 , GateNet occasionally misclassifies background regions as gates, produces rounded masks, and often fails to fully align with the actual gate boundaries. However, rather than adopting more advanced segmentation models like the Swin Transformer V2 [ 38 ] to improve the segmentation performance – as done in Geles et al. [ 4 ] – we intentionally retain GateNet’s baseline performance to demonstrate that SkyDreamer can operate in the real world with poor-quality perception. 
+
+ Figure 9 : Real-world big track flown by SkyDreamer. In the top-down view, the flight begins in front of the top-left gate. After the first gate, the trajectory continues with a slight left turn, two subsequent gates, a right turn, and a ladder maneuver in which the drone passes through the lower gate, performs a full 360° left turn, and flies back over it. From there, SkyDreamer extends the right turn, executing a steep dive into the next gate, and continues through several more gates before performing a tight braking maneuver to initiate a sharp right turn. After the following gate, the track concludes with a split-S maneuver over the first gate. In the plots, the colored lines show SkyDreamer’s position and velocity estimates for two real-world laps, with color indicating speed. Black blocks mark gate locations with exaggerated thickness. The bottom-right image presents a composite visualization of one lap from another flight flown by SkyDreamer. 
+
+ Thanks to the use of StochGAN and additional data augmentations, SkyDreamer still completes 25 consecutive laps on the inverted loop track with MAVLab gates, as summarized in Table IV . Despite GateNet’s poor performance, SkyDreamer demonstrates robustness to perceptual errors and bridges a non-trivial visual reality gap. This opens the door to using alternative more generalizable pixel-level abstractions such as depth maps, which could potentially enable high-speed, agile flight in unstructured environments. 
+
+ III-D Real-world big track 
+
+ Additional real-world experiments demonstrate SkyDreamer’s ability to fly the big track with MAVLab gates illustrated in Figure 9 . This track combines high-speed flight with challenging maneuvers, including a split-S, a sharp right turn, and a ladder. The experiments are conducted in the real world in a larger hall and under poorer lighting conditions, further highlighting SkyDreamer’s robustness across environments. 
+
+ We train SkyDreamer with slightly modified settings for these experiments: we disable symlog scaling in both the encoder and decoder [ 19 ] , set the train_ratio to $64$ , and train for a total of $35$ million environment steps. The second training stage begins after $23$ million steps, and the third stage after $31$ million steps. Furthermore, we set $t_{g}=0.5$ and introduce disturbances of $\pm 300\,\text{rad/s}$ to $\omega_{max}$ , randomly resampled every 10 timesteps, to account for imperfect actuator response modeling. 
+
+ During these experiments, five out of six flights consisting of two laps each were successful. The only crash occurred with a drone whose extrinsics lay outside the training distribution specified in Table III , as verified by a preflight Kalibr calibration, likely explaining the failure. The five successful flights were all with the same drone whose extrinsics are within the training distribution. In three of these flights, minor gate contact was audible once or twice, but SkyDreamer consistently carried on successfully, highlighting its ability to withstand and adapt to contact forces it was not explicitly trained for. In this track, SkyDreamer reaches accelerations comparable to those on the smaller tracks (around $6\,\text{g}$ ) while achieving significantly higher estimated speeds of up to $21\,\text{m/s}$ . These results highlight SkyDreamer’s ability to combine high-speed flight with agile and tight maneuvers. 
+
+ IV Conclusion 
+
+ In this work, we presented SkyDreamer, to the best of our knowledge the first end-to-end vision-based ADR policy mapping pixel-level representations directly to motor commands. By building on informed Dreamer and extending it to end-to-end vision-based ADR, SkyDreamer provides interpretability by decoding to states and drone-specific parameters, effectively turning the world model into an implicit state and parameter estimator. SkyDreamer runs fully onboard without external aid, resolves visual ambiguities by tracking progress through the world model’s decoded state, and requires no extrinsic camera calibration, enabling rapid deployment across different drones without retraining. 
+
+ Our real-world experiments demonstrate non-trivial sim-to-real transfer despite operating on low-quality segmentation masks, reliable performance across diverse tracks, and robustness to battery depletion. SkyDreamer successfully executes tight maneuvers and reaches speeds up to $21\,\text{m/s}$ with accelerations of up to $6\,\text{g}$ – speed and agility not previously demonstrated by other end-to-end vision-based ADR methods in the real world. These results highlight SkyDreamer’s adaptability to important aspects of the reality gap, bringing robustness while still achieving extremely high-speed, agile flight. 
+
+ Despite these promising results, several limitations remain. Parameter estimates tend to drift over time, and their quality varies across training runs. Decoded state estimates jump between timesteps, and SkyDreamer is still vulnerable to false positives in segmentation masks. In addition, training remains computationally demanding, requiring roughly $50$ hours to complete. 
+
+ Future work will explore extending SkyDreamer to more generalizable visual inputs, such as depth maps, flying unseen tracks, and potentially generalizing to unstructured environments or hybrid tasks by combining drone racing with obstacle avoidance. Beyond racing, SkyDreamer represents a promising step toward deploying end-to-end vision-based yet interpretable policies for high-speed, agile flight in real-world settings. 
+
+ Acknowledgments 
+
+ We are grateful to the other members of the drone racing team – Anton Lang, Till Blaha, Quentin Missine and Erin Lucassen – for their valuable insights and support during system integration and flight experiments. 
+
+ References 
+
+ [1] 
+
+E. Kaufmann, L. Bauersfeld, A. Loquercio, M. Müller, V. Koltun, and D. Scaramuzza, “Champion-level drone racing using deep reinforcement learning,” Nature , vol. 620, no. 7976, pp. 982–987, 2023. [Online]. Available: https://doi.org/10.1038/s41586-023-06419-4 
+
+ [2] 
+
+S. Bahnam, R. Ferede, T. Blaha, A. Lang, E. Lucassen, Q. Missinne, A. Verraest, C. D. Wagter, and G. de Croon, “Towards true autonomy: Winning human-level drone races with robust monocular ai,” Pending , 08 2025, pending article - to be published.
+
+ [3] 
+
+C. Pfeiffer and D. Scaramuzza, “Human-piloted drone racing: Visual processing and control,” IEEE Robotics and Automation Letters , vol. 6, no. 2, pp. 3467–3474, 2021. [Online]. Available: https://rpg.ifi.uzh.ch/docs/RAL21_Pfeiffer.pdf 
+
+ [4] 
+
+I. Geles, L. Bauersfeld, A. Romero, J. Xing, and D. Scaramuzza, “Demonstrating agile flight from pixels without state estimation,” in Robotics: Science and Systems XX, Delft, The Netherlands, July 15-19, 2024 , D. Kulic, G. Venture, K. E. Bekris, and E. Coronado, Eds., 2024. [Online]. Available: https://doi.org/10.15607/RSS.2024.XX.082 
+
+ [5] 
+
+J. Xing, A. Romero, L. Bauersfeld, and D. Scaramuzza, “Bootstrapping reinforcement learning with imitation for vision-based agile flight,” 8th Conference on Robot Learning (CoRL) , 2024.
+
+ [6] 
+
+A. Romero, A. Shenai, I. Geles, E. Aljalbout, and D. Scaramuzza, “Dream to fly: Model-based reinforcement learning for vision-based drone flight,” 2025. [Online]. Available: https://arxiv.org/abs/2501.14377 
+
+ [7] 
+
+M. Krinner, E. Aljalbout, A. Romero, and D. Scaramuzza, “Accelerating model-based reinforcement learning with state-space world models,” 2025. [Online]. Available: https://arxiv.org/abs/2502.20168 
+
+ [8] 
+
+A. Loquercio, E. Kaufmann, R. Ranftl, M. Müller, V. Koltun, and D. Scaramuzza, “Learning high-speed flight in the wild,” Science Robotics , vol. 6, no. 59, p. eabg5810, 2021. [Online]. Available: https://www.science.org/doi/abs/10.1126/scirobotics.abg5810 
+
+ [9] 
+
+H. Yu, C. Wagter, and G. C. H. E. de Croon, “Mavrl: Learn to fly in cluttered environments with varying speed,” IEEE Robotics and Automation Letters , vol. 10, no. 2, pp. 1441–1448, 2025.
+
+ [10] 
+
+H. Yu, C. D. Wagter, and G. C. H. E. de Croon, “Depth transfer: Learning to see like a simulator for real-world drone navigation,” 2025. [Online]. Available: https://arxiv.org/abs/2505.12428 
+
+ [11] 
+
+Y. Zhang, Y. Hu, Y. Song, D. Zou, and W. Lin, “Learning vision-based agile flight via differentiable physics,” Nature Machine Intelligence , vol. 7, no. 6, pp. 954–966, 6 2025. [Online]. Available: https://doi.org/10.1038/s42256-025-01048-0 
+
+ [12] 
+
+S. Origer, C. D. Wagter, R. Ferede, G. C. H. E. de Croon, and D. Izzo, “Guidance & control networks for time-optimal quadcopter flight,” 2023. [Online]. Available: https://arxiv.org/abs/2305.02705 
+
+ [13] 
+
+R. Ferede, C. De Wagter, D. Izzo, and G. C. de Croon, “End-to-end reinforcement learning for time-optimal quadcopter flight,” in 2024 IEEE International Conference on Robotics and Automation (ICRA) . IEEE, May 2024, p. 6172–6177. [Online]. Available: http://dx.doi.org/10.1109/ICRA57147.2024.10611665 
+
+ [14] 
+
+J. Schulman, F. Wolski, P. Dhariwal, A. Radford, and O. Klimov, “Proximal policy optimization algorithms.” CoRR , vol. abs/1707.06347, 2017. [Online]. Available: http://dblp.uni-trier.de/db/journals/corr/corr1707.html#SchulmanWDRK17 
+
+ [15] 
+
+R. Ferede, G. de Croon, C. De Wagter, and D. Izzo, “End-to-end neural network based optimal quadcopter control,” Robotics and Autonomous Systems , vol. 172, p. 104588, 2024. [Online]. Available: https://www.sciencedirect.com/science/article/pii/S0921889023002270 
+
+ [16] 
+
+R. Ferede, T. Blaha, E. Lucassen, C. D. Wagter, and G. C. H. E. de Croon, “One net to rule them all: Domain randomization in quadcopter racing across different platforms,” 2025. [Online]. Available: https://arxiv.org/abs/2504.21586 
+
+ [17] 
+
+T. Haarnoja, A. Zhou, P. Abbeel, and S. Levine, “Soft actor-critic: Off-policy maximum entropy deep reinforcement learning with a stochastic actor.” in ICML , ser. Proceedings of Machine Learning Research, J. G. Dy and A. Krause, Eds., vol. 80. PMLR, 2018, pp. 1856–1865. [Online]. Available: http://dblp.uni-trier.de/db/conf/icml/icml2018.html#HaarnojaZAL18 
+
+ [18] 
+
+D. Ha and J. Schmidhuber, “Recurrent world models facilitate policy evolution,” in Advances in Neural Information Processing Systems 31 . Curran Associates, Inc., 2018, pp. 2451–2463. [Online]. Available: https://papers.nips.cc/paper/7512-recurrent-world-models-facilitate-policy-evolution 
+
+ [19] 
+
+D. Hafner, J. Pasukonis, J. Ba, and T. Lillicrap, “Mastering diverse control tasks through world models,” Nature , vol. 640, no. 8059, pp. 647–653, 2025. [Online]. Available: https://doi.org/10.1038/s41586-025-08744-2 
+
+ [20] 
+
+D. Hafner, T. Lillicrap, I. Fischer, R. Villegas, D. Ha, H. Lee, and J. Davidson, “Learning latent dynamics for planning from pixels,” in Proceedings of the 36th International Conference on Machine Learning , ser. Proceedings of Machine Learning Research, K. Chaudhuri and R. Salakhutdinov, Eds., vol. 97. PMLR, 6 2019, pp. 2555–2565. [Online]. Available: https://proceedings.mlr.press/v97/hafner19a.html 
+
+ [21] 
+
+D. Hafner, T. P. Lillicrap, J. Ba, and M. Norouzi, “Dream to control: Learning behaviors by latent imagination.” in ICLR . OpenReview.net, 2020. [Online]. Available: http://dblp.uni-trier.de/db/conf/iclr/iclr2020.html#HafnerLB020 
+
+ [22] 
+
+D. Hafner, T. P. Lillicrap, M. Norouzi, and J. Ba, “Mastering atari with discrete world models.” in ICLR . OpenReview.net, 2021. [Online]. Available: http://dblp.uni-trier.de/db/conf/iclr/iclr2021.html#HafnerL0B21 
+
+ [23] 
+
+P. Wu, A. Escontrela, D. Hafner, P. Abbeel, and K. Goldberg, “Daydreamer: World models for physical robot learning,” in Proceedings of The 6th Conference on Robot Learning , ser. Proceedings of Machine Learning Research, K. Liu, D. Kulic, and J. Ichnowski, Eds., vol. 205. PMLR, 12 2023, pp. 2226–2240. [Online]. Available: https://proceedings.mlr.press/v205/wu23c.html 
+
+ [24] 
+
+G. Lambrechts, A. Bolland, and D. Ernst, “Informed POMDP: leveraging additional information in model-based RL,” RLJ , vol. 2, pp. 763–784, 2024. [Online]. Available: https://rlj.cs.umass.edu/2024/papers/Paper105.html 
+
+ [25] 
+
+E. S. Hu, J. Springer, O. Rybkin, and D. Jayaraman, “Privileged sensing scaffolds reinforcement learning,” in The Twelfth International Conference on Learning Representations, ICLR 2024, Vienna, Austria, May 7-11, 2024 . OpenReview.net, 2024. [Online]. Available: https://openreview.net/forum?id=EpVe8jAjdx 
+
+ [26] 
+
+N. Hansen, H. Su, and X. Wang, “TD-MPC2: scalable, robust world models for continuous control,” in The Twelfth International Conference on Learning Representations, ICLR 2024, Vienna, Austria, May 7-11, 2024 . OpenReview.net, 2024. [Online]. Available: https://openreview.net/forum?id=Oxh5CstDJU 
+
+ [27] 
+
+J. S. V, S. Jalagam, Y. LeCun, and V. Sobal, “Gradient-based planning with world models,” 2023. [Online]. Available: https://arxiv.org/abs/2312.17227 
+
+ [28] 
+
+G. Zhou, H. Pan, Y. LeCun, and L. Pinto, “Dino-wm: World models on pre-trained visual features enable zero-shot planning,” 2025. [Online]. Available: https://arxiv.org/abs/2411.04983 
+
+ [29] 
+
+M. T. J. Spaan, Partially Observable Markov Decision Processes . Berlin, Heidelberg: Springer Berlin Heidelberg, 2012, pp. 387–414. [Online]. Available: https://doi.org/10.1007/978-3-642-27645-3_12 
+
+ [30] 
+
+C. De Wagter, F. Paredes-Vallés, N. Sheth, and G. C. H. E. de Croon, “The sensing, state-estimation, and control behind the winning entry to the 2019 artificial intelligence robotic racing competition,” Field Robotics , vol. 2, pp. 1263–1290, 2022.
+
+ [31] 
+
+J.-Y. Zhu, T. Park, P. Isola, and A. A. Efros, “Unpaired image-to-image translation using cycle-consistent adversarial networks,” in Computer Vision (ICCV), 2017 IEEE International Conference on , 2017.
+
+ [32] 
+
+A. Almahairi, S. Rajeshwar, A. Sordoni, P. Bachman, and A. Courville, “Augmented CycleGAN: Learning many-to-many mappings from unpaired data,” in Proceedings of the 35th International Conference on Machine Learning , ser. Proceedings of Machine Learning Research, J. Dy and A. Krause, Eds., vol. 80. PMLR, 7 2018, pp. 195–204. [Online]. Available: https://proceedings.mlr.press/v80/almahairi18a.html 
+
+ [33] 
+
+A. van den Oord, O. Vinyals, and K. Kavukcuoglu, “Neural discrete representation learning.” in NIPS , I. Guyon, U. von Luxburg, S. Bengio, H. M. Wallach, R. Fergus, S. V. N. Vishwanathan, and R. Garnett, Eds., 2017, pp. 6306–6315. [Online]. Available: http://dblp.uni-trier.de/db/conf/nips/nips2017.html#OordVK17 
+
+ [34] 
+
+J. Chung, Ç. Gülçehre, K. Cho, and Y. Bengio, “Empirical Evaluation of Gated Recurrent Neural Networks on Sequence Modeling,” in NIPS 2014 Workshop on Deep Learning and Representation Learning , ser. DLW 2014, Dec. 2014. [Online]. Available: http://www.dlworkshop.org/47.pdf?attredirects=0 
+
+ [35] 
+
+R. J. Williams, “Simple statistical gradient-following algorithms for connectionist reinforcement learning,” Machine Learning , vol. 8, no. 3, pp. 229–256, 1992. [Online]. Available: https://doi.org/10.1007/BF00992696 
+
+ [36] 
+
+S. Mysore, B. Mabsout, R. Mancuso, and K. Saenko, “Regularizing action policies for smooth control with reinforcement learning,” in IEEE International Conference on Robotics and Automation, ICRA 2021, Xi’an, China, May 30 - June 5, 2021 . IEEE, 2021, pp. 1810–1816. [Online]. Available: https://doi.org/10.1109/ICRA48506.2021.9561138 
+
+ [37] 
+
+K. Vafa, P. G. Chang, A. Rambachan, and S. Mullainathan, “What has a foundation model found? using inductive bias to probe for world models,” 2025. [Online]. Available: https://arxiv.org/abs/2507.06952 
+
+ [38] 
+
+Z. Liu, H. Hu, Y. Lin, Z. Yao, Z. Xie, Y. Wei, J. Ning, Y. Cao, Z. Zhang, L. Dong, F. Wei, and B. Guo, “Swin transformer v2: Scaling up capacity and resolution,” in 2022 IEEE/CVF Conference on Computer Vision and Pattern Recognition (CVPR) , 2022, pp. 11 999–12 009.
+
+ [39] 
+
+O. Ronneberger, P. Fischer, and T. Brox, “U-net: Convolutional networks for biomedical image segmentation,” in Medical Image Computing and Computer-Assisted Intervention – MICCAI 2015 , N. Navab, J. Hornegger, W. M. Wells, and A. F. Frangi, Eds. Cham: Springer International Publishing, 2015, pp. 234–241.
+
+ [40] 
+
+X. Glorot and Y. Bengio, “Understanding the difficulty of training deep feedforward neural networks,” in Proceedings of the Thirteenth International Conference on Artificial Intelligence and Statistics , ser. Proceedings of Machine Learning Research, Y. W. Teh and M. Titterington, Eds., vol. 9. Chia Laguna Resort, Sardinia, Italy: PMLR, 5 2010, pp. 249–256. [Online]. Available: https://proceedings.mlr.press/v9/glorot10a.html 
+
+ [41] 
+
+P. Isola, J.-Y. Zhu, T. Zhou, and A. A. Efros, “Image-to-image translation with conditional adversarial networks,” in 2017 IEEE Conference on Computer Vision and Pattern Recognition (CVPR) , 2017, pp. 5967–5976.
+
+ Appendix A GateNet Implementation Details 
+
+ Network 
+
+ For segmentation, we adopt a U-Net style architecture [ 39 ] , referred to as GateNet, similar to Bahnam et al. [ 2 ] . The network consists of an encoder–decoder with skip connections from the encoder to the corresponding decoder layer, following the standard U-Net design [ 39 ] , where channel dimensions are scaled by a factor $f$ . Each block consists of double convolutional layers with batch normalization and ReLU activation functions. 
+
+ Let inc denote the initial double convolutional block. downk denotes a max-pooling layer followed by a double convolutional block with $k$ output channels. Before applying downk , the corresponding features are stored as skip connections for the decoder. upk denotes a transposed convolution and batch normalization, followed by adding the skip connections from the corresponding encoder layer, and then a double convolutional block with $k$ output channels. Finally, outc-k denotes a $1\times 1$ convolution mapping to a single output channel and a sigmoid activation function. 
+
+ The resulting GateNet architecture is: 
+
+ $\displaystyle\begin{array}[]{c c c}\text{Encoder}&\text{Decoder}&\text{Outputs}\\[5.69054pt]
+\texttt{inc-64/f}&\rightarrow\texttt{up4-64/f}&\rightarrow\texttt{outc4-1}\\[2.84526pt]
+\downarrow&\uparrow&\\[2.84526pt]
+\texttt{down1-128/f}&\rightarrow\texttt{up3-64/f}&\rightarrow\texttt{outc3-1}\\[2.84526pt]
+\downarrow&\uparrow&\\[2.84526pt]
+\texttt{down2-256/f}&\rightarrow\texttt{up2-128/f}&\rightarrow\texttt{outc2-1}\\[2.84526pt]
+\downarrow&\uparrow&\\[2.84526pt]
+\texttt{down3-512/f}&\rightarrow\texttt{up1-256/f}&\rightarrow\texttt{outc1-1}\\[2.84526pt]
+\downarrow&\nearrow&\\[2.84526pt]
+\texttt{down4-512/f}&&\rightarrow\texttt{outc0-1}\\
+\end{array}$ 
+
+ The network produces five output maps $\{y_{0},y_{1},y_{2},y_{3},y_{4}\}$ at different resolutions. These multi-scale predictions are supervised with auxiliary losses to improve gradient flow and overall segmentation accuracy. 
+
+ Training setup 
+
+ We use the same hyperparameters as in Bahnam et al. [ 2 ] . Each output map is supervised with a combination of Dice loss and binary cross-entropy (BCE) loss: 
+
+ $\displaystyle\mathcal{L}_{i}=\mathcal{L}_{\text{Dice}}(y_{i},\hat{y}_{i})+2\cdot\mathcal{L}_{\text{BCE}}(y_{i},\hat{y}_{i}),$ 
+
+ and we apply output-specific scaling factors to emphasize higher-resolution predictions: 
+
+ $\displaystyle\mathcal{L}_{\text{total}}=4\cdot\mathcal{L}_{0}+2\cdot\mathcal{L}_{1}+\sum_{i=2}^{4}\mathcal{L}_{i}.$ 
+
+ All convolutional layers are initialized using Xavier uniform initialization [ 40 ] . 
+
+ Data augmentation 
+
+ We largely use the same augmentations as in Bahnam et al. [ 2 ] . Since our images are captured with a low exposure time (1 ms), we do not simulate motion blur with KernelBlur. Instead, we apply stronger shot noise (standard deviation of 40 for pixel values in the range 0–255 instead of 25) to mimic the increased noise associated with low exposure times. 
+
+ Gate-specific implementation 
+
+ For MAVLab gates, we use a resolution of $196\times 196$ with $f=2$ . For orange gates, we use a resolution of $384\times 384$ with $f=4$ . 
+
+ Appendix B StochGAN Implementation Details 
+
+ Generator 
+
+ The generator is a CNN-based encoder–residual–decoder network, largely based on Zhu et al. [ 31 ] . We use 6 residual blocks and images of size $64\times 64$ , the same resolution as those rendered and used by SkyDreamer during training. Following a similar convention to Zhu et al. [ 31 ] , let c7s1-k denote a $7\times 7$ Convolution–InstanceNorm–ReLU layer with $k$ filters and stride 1, using reflection padding. dk corresponds to a $3\times 3$ Convolution–InstanceNorm–ReLU layer with $k$ filters and stride 2 for downsampling. Rk denotes a residual block consisting of two $3\times 3$ Convolution–InstanceNorm–ReLU layers with $k$ filters, using reflection padding and a skip connection. uk represents a $3\times 3$ transposed Convolution–InstanceNorm–ReLU layer with $k$ filters, stride 2 for upsampling, and reflection padding. Finally, the output layer is denoted as c7s1-k-tanh , which follows the same convention as c7s1-k but uses a tanh activation at the final layer. 
+
+ The resulting generator architecture is: 
+
+ Encoder: 
+ $\displaystyle\texttt{c7s1-32},\;\texttt{d64},\;\texttt{d128}$ 
+
+ Residual blocks: 
+ $\displaystyle 6\times\texttt{R128}$ 
+
+ Decoder: 
+ $\displaystyle\texttt{u64},\;\texttt{u32},\;\texttt{c7s1-1-tanh}$ 
+
+ To obtain a StochGAN [ 32 ] , we add an additional noise channel, uniformly sampled from $[-1,1]$ , to the input image. 
+
+ Discriminator 
+
+ Similar to Zhu et al. [ 31 ] , the discriminator follows a PatchGAN design [ 41 ] . Largely following the design and conventions in Zhu et al. [ 31 ] , let Ck denote a $4\times 4$ Convolution–InstanceNorm–LeakyReLU layer with $k$ filters and stride 2. InstanceNorm is omitted in the first Ck layer, and LeakyReLU activations with a negative slope of 0.2 are used. After the last block, we apply zero-padding followed by a $4\times 4$ convolution with 1 channel ( conv4-1 ), producing a patch-wise realism score. 
+
+ The resulting discriminator architecture is: 
+
+ $\texttt{C32},\;\texttt{C64},\;\texttt{C128},\;\texttt{C256},\;\texttt{conv4-1}$ 
+
+ Training setup. 
+
+ We largely follow the training procedure of Zhu et al. [ 31 ] , except we use the Adam optimizer with $\beta_{1}=0.5$ , $\beta_{2}=0.999$ , and a base learning rate of $1.5\times 10^{-4}$ . 
+
+ Experimental support, please
+ view the build logs 
+ for errors. Generated by
+
+ L
+ A 
+ T
+ E 
+
+ xml 
+
+ .
+
+ Instructions for reporting errors 
+ We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+ support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+ methods listed below: 
+
+ Click the "Report Issue" ( 
+
+ ) button, located in the page header. 
+
+ Tip: You can select the relevant text first, to include it in your report. 
+ Our team has already identified the following issues . We appreciate your time reviewing and reporting rendering errors we
+ may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+ should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+ all. 
+ Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion , and welcome developer contributions . 
+
+ We gratefully acknowledge support from
+ our major funders ,
+ member institutions , ,
+ and all contributors.
+
+ About 
+ · 
+ Help 
+ · 
+ Contact 
+ · 
+ Subscribe 
+ · 
+ Copyright 
+ · 
+ Privacy 
+ · 
+ Accessibility 
+ · 
+ Operational Status (opens in new tab) 
+
+ Major funding support from 
+

@@ -1,0 +1,20 @@
+[project]
+name = "skydreamer"
+version = "0.1.0"
+description = "Reproduction of SkyDreamer (arXiv:2510.14783) from the paper alone"
+requires-python = ">=3.10"
+dependencies = ["jax>=0.4.30", "numpy>=1.26"]
+
+[project.optional-dependencies]
+dev = ["pytest>=8", "ruff"]
+# GateNet only. The simulator and DreamerV3 training need none of this --
+# GateNet runs on real camera images, never inside the training loop.
+gatenet = ["torch>=2.2", "opencv-python", "pyyaml"]
+export = ["onnx", "onnxruntime"]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["skydreamer*"]

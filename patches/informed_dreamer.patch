@@ -1,0 +1,169 @@
+diff --git a/dreamerv3/agent.py b/dreamerv3/agent.py
+index 0cada34..bb4cd5d 100644
+--- a/dreamerv3/agent.py
++++ b/dreamerv3/agent.py
+@@ -36,8 +36,20 @@ class Agent(embodied.jax.Agent):
+     self.config = config
+ 
+     exclude = ('is_first', 'is_last', 'is_terminal', 'reward')
+-    enc_space = {k: v for k, v in obs_space.items() if k not in exclude}
+-    dec_space = {k: v for k, v in obs_space.items() if k not in exclude}
++    # Informed POMDP (Lambrechts et al. 2024, used by SkyDreamer): keys named
++    # `info_*` are privileged information available at training time only.  The
++    # encoder must never see them; the decoder reconstructs *only* them, which
++    # is what turns the world model into a state and parameter estimator.
++    informed = getattr(config, 'informed', False)
++    is_info = lambda k: k.startswith('info_')
++    enc_space = {
++        k: v for k, v in obs_space.items()
++        if k not in exclude and not (informed and is_info(k))}
++    dec_space = {
++        k: v for k, v in obs_space.items()
++        if k not in exclude and (is_info(k) if informed else True)}
++    assert enc_space, 'encoder has no inputs'
++    assert dec_space, 'decoder has no targets; informed=True needs info_* keys'
+     self.enc = {
+         'simple': rssm.Encoder,
+     }[config.enc.typ](enc_space, **config.enc[config.enc.typ], name='enc')
+@@ -128,6 +140,15 @@ class Agent(embodied.jax.Agent):
+     out['finite'] = elements.tree.flatdict(jax.tree.map(
+         lambda x: jnp.isfinite(x).all(range(1, x.ndim)),
+         dict(obs=obs, carry=carry, tokens=tokens, feat=feat, act=act)))
++    if self.config.decode_in_policy:
++      # SkyDreamer's interpretability claim (II-G, Figures 4/5): the decoder
++      # reconstructs privileged state, so running it at policy time exposes
++      # what the world model believes the drone's position, velocity, camera
++      # extrinsics and dynamic parameters currently are.  Off by default --
++      # it costs a decoder pass per step and the training loop never needs it.
++      _, _, policy_recons = self.dec({}, feat, reset, **kw)
++      for key, dist in policy_recons.items():
++        out[f'recon_{key}'] = dist.pred()
+     carry = (enc_carry, dyn_carry, dec_carry, act)
+     if self.config.replay_context:
+       out.update(elements.tree.flatdict(dict(
+@@ -389,6 +410,7 @@ def imag_loss(
+     horizon=333,
+     lam=0.95,
+     actent=3e-4,
++    actsmooth=0.0,
+     slowreg=1.0,
+ ):
+   losses = {}
+@@ -412,6 +434,24 @@ def imag_loss(
+   ents = {k: v.entropy()[:, :-1] for k, v in policy.items()}
+   policy_loss = sg(weight[:, :-1]) * -(
+       logpi * sg(adv_normed) + actent * sum(ents.values()))
++  if actsmooth:
++    # SkyDreamer II-G: without this the policy converges to bang-bang motor
++    # commands, which are fine in simulation and burn real motors.  Applied to
++    # the policy *mean* only -- penalising the full distribution would fight
++    # the entropy bonus above.
++    # Heads come wrapped in outs.Agg, which has no `.mean`; unwrap it, and
++    # assert rather than silently contributing nothing to the loss.
++    means = []
++    for v in policy.values():
++      inner = getattr(v, 'output', v)
++      if isinstance(inner, embodied.jax.outs.Normal):
++        means.append(inner.mean)
++    assert means, (
++        'actsmooth requires a continuous (Normal) policy head; got '
++        f'{[type(getattr(v, "output", v)).__name__ for v in policy.values()]}')
++    smooth = sum(jnp.square(m[:, 1:] - m[:, :-1]).sum(-1) for m in means)
++    policy_loss = policy_loss + actsmooth * smooth
++    metrics['actsmooth'] = smooth.mean()
+   losses['policy'] = policy_loss
+ 
+   voffset, vscale = valnorm(ret, update)
+diff --git a/dreamerv3/configs.yaml b/dreamerv3/configs.yaml
+index 786b67e..8579f25 100644
+--- a/dreamerv3/configs.yaml
++++ b/dreamerv3/configs.yaml
+@@ -35,6 +35,7 @@ defaults:
+     minecraft: {size: [64, 64], break_speed: 100.0, logs: False, length: 36000}
+     dmc: {size: [64, 64], repeat: 1, proprio: True, image: True, camera: -1}
+     loconav: {size: [64, 64], repeat: 1, camera: -1}
++    skydreamer: {size: 64, max_steps: 2000, use_seed: True}
+ 
+   replay:
+     size: 5e6
+@@ -83,6 +84,8 @@ defaults:
+     coordinator_address: ''
+ 
+   agent:
++    informed: False
++    decode_in_policy: False
+     loss_scales: {rec: 1.0, rew: 1.0, con: 1.0, dyn: 1.0, rep: 0.1, policy: 1.0, value: 1.0, repval: 0.3}
+     opt: {lr: 4e-5, agc: 0.3, eps: 1e-20, beta1: 0.9, beta2: 0.999, momentum: True, wd: 0.0, schedule: const, warmup: 1000, anneal: 0}
+     ac_grads: False
+@@ -94,7 +97,7 @@ defaults:
+       simple: {depth: 64, mults: [2, 3, 4, 4], layers: 3, units: 1024, act: silu, norm: rms, winit: trunc_normal_in, symlog: True, outer: False, kernel: 5, strided: False}
+     dec:
+       typ: simple
+-      simple: {depth: 64, mults: [2, 3, 4, 4], layers: 3, units: 1024, act: silu, norm: rms, outscale: 1.0, winit: trunc_normal_in, outer: False, kernel: 5, bspace: 8, strided: False}
++      simple: {depth: 64, mults: [2, 3, 4, 4], layers: 3, units: 1024, act: silu, norm: rms, outscale: 1.0, winit: trunc_normal_in, symlog: True, outer: False, kernel: 5, bspace: 8, strided: False}
+     rewhead: {layers: 1, units: 1024, act: silu, norm: rms, output: symexp_twohot, outscale: 0.0, winit: trunc_normal_in, bins: 255}
+     conhead: {layers: 1, units: 1024, act: silu, norm: rms, output: binary, outscale: 1.0, winit: trunc_normal_in}
+     policy: {layers: 3, units: 1024, act: silu, norm: rms, minstd: 0.1, maxstd: 1.0, outscale: 0.01, unimix: 0.01, winit: trunc_normal_in}
+@@ -105,7 +108,7 @@ defaults:
+     imag_length: 15
+     horizon: 333
+     contdisc: True
+-    imag_loss: {slowtar: False, lam: 0.95, actent: 3e-4, slowreg: 1.0}
++    imag_loss: {slowtar: False, lam: 0.95, actent: 3e-4, actsmooth: 0.0, slowreg: 1.0}
+     repl_loss: {slowtar: False, lam: 0.95, slowreg: 1.0}
+     slowvalue: {rate: 0.02, every: 1}
+     retnorm: {impl: perc, rate: 0.01, limit: 1.0, perclo: 5.0, perchi: 95.0, debias: False}
+@@ -195,6 +198,41 @@ loconav:
+   env.loconav.repeat: 1
+   run.train_ratio: 256
+ 
++# --- SkyDreamer (arXiv:2510.14783) ----------------------------------------
++# Section III-A: size12m, default hyperparameters, replay_context 16,
++# train_ratio 128, slowtar true, replay size 10e6 (= 31 h of flight).
++# Phase 1 of 3; see scripts/train.py for the batch_length / entropy / lr
++# schedule changes at 8M and 13M steps.
++skydreamer:
++  task: skydreamer_inverted_loop
++  batch_length: 64
++  replay_context: 16
++  replay.size: 10e6
++  agent:
++    informed: True
++    imag_loss: {slowtar: True, actsmooth: 0.002}
++    imag_length: 16
++  run: {steps: 17e6, train_ratio: 128, envs: 16}
++  env:
++    skydreamer: {size: 64, max_steps: 2000, use_seed: True}
++
++# Section III-D: the big track needs longer training, a lower train ratio and
++# no symlog on the encoder/decoder.
++skydreamer_big:
++  task: skydreamer_big
++  batch_length: 64
++  replay_context: 16
++  replay.size: 10e6
++  agent:
++    informed: True
++    imag_loss: {slowtar: True, actsmooth: 0.002}
++    imag_length: 16
++    enc.simple.symlog: False
++    dec.simple.symlog: False
++  run: {steps: 35e6, train_ratio: 64, envs: 16}
++  env:
++    skydreamer: {size: 64, max_steps: 4000, use_seed: True}
++
+ multicpu:
+   batch_size: 12
+   jax.mock_devices: 8
+diff --git a/dreamerv3/main.py b/dreamerv3/main.py
+index 10476e8..92a0a22 100644
+--- a/dreamerv3/main.py
++++ b/dreamerv3/main.py
+@@ -229,6 +229,7 @@ def make_env(config, index, **overrides):
+       'langroom': 'embodied.envs.langroom:LangRoom',
+       'procgen': 'embodied.envs.procgen:ProcGen',
+       'bsuite': 'embodied.envs.bsuite:BSuite',
++      'skydreamer': 'skydreamer.embodied_env:SkyDreamer',
+       'memmaze': lambda task, **kw: from_gym.FromGym(
+           f'MemoryMaze-{task}-v0', **kw),
+   }[suite]
