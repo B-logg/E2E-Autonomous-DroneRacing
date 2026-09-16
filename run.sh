@@ -100,6 +100,66 @@ if [ "${MODE}" != "smoke" ] && [ "${MODE}" != "setup" ]; then
   fi
 fi
 
+# --------------------------------------------------------------------------
+log "Python environment"
+# --------------------------------------------------------------------------
+# uv installs its own Python, so the server's system Python is irrelevant.
+if ! command -v uv >/dev/null 2>&1; then
+  export PATH="${HOME}/.local/bin:${HOME}/.cargo/bin:${PATH}"
+fi
+if ! command -v uv >/dev/null 2>&1; then
+  echo "installing uv..."
+  curl -LsSf https://astral.sh/uv/install.sh | sh
+  export PATH="${HOME}/.local/bin:${HOME}/.cargo/bin:${PATH}"
+fi
+command -v uv >/dev/null 2>&1 || die "uv install failed; install Python ${PY_VERSION} manually and re-run"
+
+if [ ! -x "${VENV}/bin/python" ]; then
+  uv venv --python "${PY_VERSION}" "${VENV}"
+fi
+PY="${VENV}/bin/python"
+PIP=(uv pip install --python "${PY}" --quiet)
+echo "python: $(${PY} -V)"
+
+# --------------------------------------------------------------------------
+log "DreamerV3 @ ${DV3_COMMIT:0:7} + SkyDreamer patch"
+# --------------------------------------------------------------------------
+if [ ! -d "${DV3_DIR}/.git" ]; then
+  mkdir -p "$(dirname "${DV3_DIR}")"
+  git clone --quiet https://github.com/danijar/dreamerv3.git "${DV3_DIR}"
+  git -C "${DV3_DIR}" checkout --quiet --detach "${DV3_COMMIT}"
+  git -C "${DV3_DIR}" apply "${ROOT}/patches/informed_dreamer.patch"
+  echo "patched"
+else
+  echo "already present (delete third_party/ to redo)"
+fi
+
+# --------------------------------------------------------------------------
+log "Dependencies"
+# --------------------------------------------------------------------------
+if [ ! -f "${VENV}/.deps-ok" ]; then
+  if command -v nvidia-smi >/dev/null 2>&1; then
+    "${PIP[@]}" "jax[cuda12]==0.4.33"
+  else
+    "${PIP[@]}" "jax[cpu]==0.4.33"
+  fi
+  # dreamerv3's requirements.txt drags in Atari/DMLab/Minecraft extras that are
+  # slow, fragile and irrelevant here. These are the ones it actually imports.
+  "${PIP[@]}" "numpy<2" elements ninjax optax portal scope granular einops chex \
+      jaxtyping colored_traceback tqdm "ruamel.yaml" msgpack rich cloudpickle psutil \
+      pytest
+  "${PIP[@]}" -e "${ROOT}"
+  touch "${VENV}/.deps-ok"
+fi
+"${PY}" -c "import jax; print('jax', jax.__version__, jax.devices())"
+
+export PYTHONPATH="${DV3_DIR}:${ROOT}${PYTHONPATH:+:${PYTHONPATH}}"
+# `--run.envs 16` spawns sixteen environment processes.  The environment pins
+# its own computation to CPU (skydreamer/embodied_env.py), but a spawned worker
+# can still open a CUDA context, so leave the trainer some headroom instead of
+# letting it preallocate almost the whole card.
+export XLA_PYTHON_CLIENT_MEM_FRACTION="${XLA_PYTHON_CLIENT_MEM_FRACTION:-0.80}"
+
 if [ "${MODE}" = "setup" ]; then
   log "Setup complete. Run './run.sh --smoke' next."
   exit 0
