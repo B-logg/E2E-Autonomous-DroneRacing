@@ -83,7 +83,7 @@ git clone <your-repo-url> skydreamer && cd skydreamer
 ./run.sh             # ~50 h   — the paper's run, then evaluation
 ```
 
-`--smoke` installs everything, runs the 25-test suite, trains 2000 steps with a
+`--smoke` installs everything, runs the test suite, trains 2000 steps with a
 tiny model and evaluates it. The resulting policy is useless by design; what it
 proves is that setup, training, checkpointing and evaluation all work. Five
 minutes here saves finding out at hour 40.
@@ -236,6 +236,19 @@ decoded position and ground truth. That is the paper's central claim — the
 world model as an implicit state estimator (Figures 4 and 5) — and it moves
 long before lap times do. If it is not falling well under a metre, nothing
 downstream will work.
+
+### What a CPU smoke test cannot catch
+
+Two failure modes are invisible without a GPU, so they get source-level checks
+in `tests/test_paper_conformance.py` instead:
+
+- **`np.asarray(jax_array)` is a device-to-host transfer.** DreamerV3 sets
+  `jax_transfer_guard='disallow'` process-wide. On GPU an unguarded read
+  raises; on CPU there is no transfer at all, so it passes silently. Verified
+  directly: with the guard on, CPU blocks host-to-device but *not*
+  device-to-host.
+- **Env workers are spawned processes that each import JAX.** On CPU they cost
+  nothing; on GPU they would each open a CUDA context.
 
 ## Local development
 

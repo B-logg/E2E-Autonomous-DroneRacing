@@ -616,6 +616,22 @@ def test_parallel_envs_get_distinct_seeds(cfg):
 # ==========================================================================
 
 
+def test_evaluate_guards_the_whole_rollout():
+    """`np.asarray(jax_array)` is a device-to-host transfer that DreamerV3's
+    process-wide `jax_transfer_guard='disallow'` rejects -- but *only on GPU*.
+    On CPU there is no transfer, so a missing guard passes every local test and
+    then kills the evaluation on the rented machine after training finished.
+
+    A source check is crude, but the alternative is no check at all: this class
+    of bug cannot be reproduced on a CPU-only box."""
+    src = (ROOT / "scripts" / "evaluate.py").read_text()
+    head = src[src.index("def rollout("):src.index("def _rollout(")]
+    assert 'jax.transfer_guard("allow")' in head, "rollout must open the guard"
+    assert "return _rollout(" in head, "rollout must delegate inside the guard"
+    # and the real work must live in the delegate, not alongside the guard
+    assert "np.asarray" not in head
+
+
 def test_obs_space_matches_a_real_reset():
     """`obs_space` is declared statically so that reading it cannot initialise a
     JAX backend before DreamerV3 chooses one.  That makes it possible for the

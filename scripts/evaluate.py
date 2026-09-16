@@ -90,7 +90,23 @@ def build_agent(logdir: pathlib.Path, env):
 
 def rollout(agent, cfg_env, episodes: int, laps: int, seed: int, chunk: int = 64):
     """Drive the JAX env directly rather than through embodied's driver, so the
-    ground-truth `EnvState` stays visible alongside the policy's own beliefs."""
+    ground-truth `EnvState` stays visible alongside the policy's own beliefs.
+
+    Everything runs under one transfer guard.  This function is a host-side
+    driver by nature -- it reads ground truth out of the env state and pushes
+    actions back every step -- and DreamerV3 sets
+    `jax_transfer_guard='disallow'` process-wide.  On GPU each of those reads is
+    a real device-to-host transfer; on CPU none of them are, so a *missing*
+    guard is invisible to the CPU smoke test and only explodes on the rented
+    machine.  Hence one guard around the whole thing rather than a scattering of
+    them that has to be kept complete by hand."""
+    import jax
+
+    with jax.transfer_guard("allow"):
+        return _rollout(agent, cfg_env, episodes, laps, seed, chunk)
+
+
+def _rollout(agent, cfg_env, episodes: int, laps: int, seed: int, chunk: int = 64):
     import jax
     import jax.numpy as jnp
 
