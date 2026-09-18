@@ -153,6 +153,12 @@ if [ ! -f "${VENV}/.deps-ok" ]; then
 fi
 "${PY}" -c "import jax; print('jax', jax.__version__, jax.devices())"
 
+# DreamerV3's `logfn` stacks every uint8 ndim==3 observation and the `scope`
+# output writes it out as one mp4 per episode.  Our 64x64 mask matches, so a
+# long run quietly fills the disk with videos of segmentation masks.  Keep the
+# jsonl outputs (metrics.jsonl / scores.jsonl are all we read) and drop scope.
+LOG_ARGS=(--logger.outputs jsonl)
+
 export PYTHONPATH="${DV3_DIR}:${ROOT}${PYTHONPATH:+:${PYTHONPATH}}"
 # `--run.envs 16` spawns sixteen environment processes.  The environment pins
 # its own computation to CPU (skydreamer/embodied_env.py), but a spawned worker
@@ -185,7 +191,7 @@ if [ "${MODE}" = "smoke" ]; then
       --run.steps 2000 --run.envs 4 --batch_size 8 --batch_length 16 \
       --report_length 16 --replay_context 1 --run.train_ratio 16 \
       --run.log_every 20 --run.report_every 1e9 --run.save_every 500 \
-      "${JAX_ARGS[@]+"${JAX_ARGS[@]}"}"
+      "${JAX_ARGS[@]+"${JAX_ARGS[@]}"}" "${LOG_ARGS[@]}"
   "${PY}" "${ROOT}/scripts/evaluate.py" --logdir "${RUN_DIR}" --episodes 8 --laps 1
   log "Smoke test passed. Now run './run.sh' for the real thing."
   exit 0
@@ -214,7 +220,7 @@ mkdir -p "${RUN_DIR}"
 
 "${PY}" "${ROOT}/scripts/train.py" \
     --logdir "${RUN_DIR}" --preset "${PRESET}" --jax.prealloc False \
-    "${JAX_ARGS[@]+"${JAX_ARGS[@]}"}" "${EXTRA[@]+"${EXTRA[@]}"}" \
+    "${JAX_ARGS[@]+"${JAX_ARGS[@]}"}" "${LOG_ARGS[@]}" "${EXTRA[@]+"${EXTRA[@]}"}" \
     2>&1 | tee -a "${RUN_DIR}/train.log"
 
 log "Evaluating in simulation"

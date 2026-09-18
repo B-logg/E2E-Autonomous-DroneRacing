@@ -616,6 +616,16 @@ def test_parallel_envs_get_distinct_seeds(cfg):
 # ==========================================================================
 
 
+def test_video_logging_is_disabled():
+    """DreamerV3's logfn stacks every uint8 ndim==3 observation and the `scope`
+    output writes one mp4 per episode.  The 64x64 mask matches that test, so a
+    full-length run fills the disk with videos of segmentation masks -- it
+    killed a run at 11.9M of 17M steps.  Keep jsonl, drop scope."""
+    src = (ROOT / "run.sh").read_text()
+    assert "--logger.outputs jsonl" in src
+    assert src.count('"${LOG_ARGS[@]}"') >= 2, "both smoke and full runs need it"
+
+
 def test_evaluate_guards_the_whole_rollout():
     """`np.asarray(jax_array)` is a device-to-host transfer that DreamerV3's
     process-wide `jax_transfer_guard='disallow'` rejects -- but *only on GPU*.
