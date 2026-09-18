@@ -275,6 +275,22 @@ one. SkyDreamer's Table III uses +-20% (eval) to +-30% (train), with `tau`
 included. That is consistent with the literature, so **we changed nothing** --
 noted here only so nobody "fixes" it later.
 
+### E5b. Replay buffer size on a small disk — a deviation to record
+The paper's `replay.size` is 10e6 steps. On disk that is **~38 GB** (measured
+3782 B/step, not the 19x compression a synthetic sample suggested), and
+DreamerV3 never deletes old chunks, so `scripts/prune_replay.py` has to keep
+the directory bounded.
+
+If the machine cannot hold that, shrink it and **write the number down**:
+
+```bash
+./run.sh --replay.size 6e6     # ~23 GB disk, ~28 GB RAM
+```
+
+DreamerV3's own default is 5e6, so anything in 5e6..10e6 is well-trodden; it
+narrows how far back the world model can sample, which matters most for the
+long-horizon parameter identification the paper's phase 2 is aimed at.
+
 ### E5. Sensor noise — deliberately left at zero
 The ADR literature is clear that the dominant IMU error on a racing quad is
 **propeller vibration, not sensor noise**, and there is no standard value to

@@ -616,6 +616,20 @@ def test_parallel_envs_get_distinct_seeds(cfg):
 # ==========================================================================
 
 
+def test_replay_is_pruned_during_training():
+    """DreamerV3 never deletes replay chunks, so the directory grows with the
+    whole run rather than the buffer window.  Measured 3782 B/step on disk --
+    only 1.2x compression once the policy actually flies, not the 19x a
+    synthetic sample suggested -- so 17M steps is ~64 GB and fills a 50 GB
+    disk at about 70% of the run.  Deleting the oldest chunks is safe:
+    Replay.load() sorts newest-first and reads only `capacity` steps."""
+    src = (ROOT / "run.sh").read_text()
+    assert "prune_replay.py" in src, "training must run the pruner"
+    assert "--interval 600" in src
+    assert "3782" in src, "the disk estimate must use the measured rate"
+    assert (ROOT / "scripts" / "prune_replay.py").exists()
+
+
 def test_video_logging_is_disabled():
     """DreamerV3's logfn stacks every uint8 ndim==3 observation and the `scope`
     output writes one mp4 per episode.  The 64x64 mask matches that test, so a

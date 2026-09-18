@@ -57,35 +57,37 @@ else
   JAX_ARGS=(--jax.platform cpu)
 fi
 
-# The replay buffer is the real resource constraint, and it is easy to miss.
-# The paper uses replay.size = 10e6 steps (31 h of flight).  Each step is 4596
-# bytes and DreamerV3 keeps the working set uncompressed in RAM
-# (embodied/core/replay.py: self.chunks), so RAM is the binding constraint.
+# Two separate resource constraints, and they are not the same size.
 #
-# Disk is much smaller than RAM here: chunks are written with
-# np.savez_compressed and the 64x64 binary masks compress about 19x, measured
-# at 241 bytes/step.  Old chunk files are never pruned, so budget for every
-# step of the run, not just the buffer window, plus ~6 GB of CUDA wheels.
+# RAM: DreamerV3 holds the replay working set uncompressed (4596 B/step,
+# embodied/core/replay.py: self.chunks), so replay.size 10e6 is ~46 GB of RAM.
+#
+# DISK: chunks are written with np.savez_compressed but the binary masks
+# barely compress once the policy actually flies -- measured 3782 B/step on a
+# real run, only 1.2x. Worse, DreamerV3 never deletes old chunk files, so the
+# directory grows with the whole run, not the buffer window. scripts/
+# prune_replay.py keeps it bounded; without it 17M steps needs ~64 GB.
 REPLAY_STEPS=10000000
 TOTAL_STEPS=17000000
 RAM_NEED_GB=$(( REPLAY_STEPS * 4596 / 1000000000 ))
-# 241 B/step measured on an untrained policy; x3 margin because a policy that
-# actually flies laps produces busier, less compressible masks.
-DISK_NEED_GB=$(( TOTAL_STEPS * 241 * 3 / 1000000000 + 8 ))
+# With the pruner running, disk is bounded by the buffer window (plus its
+# 1.25 margin) rather than by TOTAL_STEPS, plus ~9 GB of venv and CUDA wheels.
+DISK_NEED_GB=$(( REPLAY_STEPS * 3782 * 5 / 4 / 1000000000 + 9 ))
 DISK_GB=$(df -Pk "${ROOT}" | awk 'NR==2 {printf "%d", $4/1000000}')
 if command -v free >/dev/null 2>&1; then
   RAM_GB=$(free -g | awk '/^Mem:/ {print $2}')
 else
   RAM_GB=$(( $(sysctl -n hw.memsize 2>/dev/null || echo 0) / 1000000000 ))
 fi
-echo "needs ~${RAM_NEED_GB} GB RAM (uncompressed buffer) and ~${DISK_NEED_GB} GB disk (compressed ~19x)"
+echo "needs ~${RAM_NEED_GB} GB RAM (uncompressed buffer) and ~${DISK_NEED_GB} GB disk (pruned)"
 echo "  available: ${RAM_GB} GB RAM, ${DISK_GB} GB disk free at ${ROOT}"
 
 if [ "${MODE}" != "smoke" ] && [ "${MODE}" != "setup" ]; then
   if [ "${DISK_GB}" -lt "${DISK_NEED_GB}" ]; then
     die "not enough disk: ${DISK_GB} GB free, need ~${DISK_NEED_GB} GB.
-     Replay chunks are never pruned, so this grows over the whole run.
-     Either rent with a bigger disk, or shorten the run."
+     Shrink the buffer -- this DEVIATES from the paper's 10e6, so write it down:
+       ./run.sh --replay.size 6e6     (~28 GB of disk, ~28 GB of RAM)
+     DreamerV3's own default is 5e6, so this is a well-trodden setting."
   fi
   if [ "${DISK_GB}" -lt $(( DISK_NEED_GB * 2 )) ]; then
     echo "NOTE: ${DISK_GB} GB disk is enough but not generous. Watch it with"
@@ -217,6 +219,16 @@ else
   echo "Detach this (tmux/screen/nohup) -- and if the instance dies, ./run.sh --resume"
 fi
 mkdir -p "${RUN_DIR}"
+
+# DreamerV3 never deletes replay chunks; without this the disk fills mid-run.
+REPLAY_SIZE="${REPLAY_STEPS}"
+for i in "${!EXTRA[@]}"; do
+  [ "${EXTRA[$i]}" = "--replay.size" ] && REPLAY_SIZE="${EXTRA[$((i+1))]}"
+done
+"${PY}" "${ROOT}/scripts/prune_replay.py" --logdir "${RUN_DIR}" \
+    --keep-steps "${REPLAY_SIZE}" --interval 600 >> "${RUN_DIR}/prune.log" 2>&1 &
+PRUNER=$!
+trap 'kill ${PRUNER} 2>/dev/null || true' EXIT
 
 "${PY}" "${ROOT}/scripts/train.py" \
     --logdir "${RUN_DIR}" --preset "${PRESET}" --jax.prealloc False \
