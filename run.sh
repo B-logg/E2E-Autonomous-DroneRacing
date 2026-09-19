@@ -174,6 +174,14 @@ fi
 # jsonl outputs (metrics.jsonl / scores.jsonl are all we read) and drop scope.
 LOG_ARGS=(--logger.outputs jsonl)
 
+# `run.envs` is DreamerV3's, not the paper's (it never states a worker count),
+# so it is free to match the machine.  Each worker is a spawned process running
+# the environment on CPU; more of them than cores just thrashes.
+CORES=$(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 16)
+ENVS=$(( CORES < 16 ? CORES : 16 ))
+ENV_ARGS=(--run.envs "${ENVS}")
+echo "env workers: ${ENVS} (machine has ${CORES} cores)"
+
 export PYTHONPATH="${DV3_DIR}:${ROOT}${PYTHONPATH:+:${PYTHONPATH}}"
 # `--run.envs 16` spawns sixteen environment processes.  The environment pins
 # its own computation to CPU (skydreamer/embodied_env.py), but a spawned worker
@@ -241,7 +249,8 @@ trap 'kill ${PRUNER} 2>/dev/null || true' EXIT
 
 "${PY}" "${ROOT}/scripts/train.py" \
     --logdir "${RUN_DIR}" --preset "${PRESET}" --jax.prealloc False \
-    "${JAX_ARGS[@]+"${JAX_ARGS[@]}"}" "${LOG_ARGS[@]}" "${EXTRA[@]+"${EXTRA[@]}"}" \
+    "${JAX_ARGS[@]+"${JAX_ARGS[@]}"}" "${LOG_ARGS[@]}" "${ENV_ARGS[@]}" \
+    "${EXTRA[@]+"${EXTRA[@]}"}" \
     2>&1 | tee -a "${RUN_DIR}/train.log"
 
 log "Evaluating in simulation"
