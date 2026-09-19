@@ -275,21 +275,28 @@ one. SkyDreamer's Table III uses +-20% (eval) to +-30% (train), with `tau`
 included. That is consistent with the literature, so **we changed nothing** --
 noted here only so nobody "fixes" it later.
 
-### E5b. Replay buffer size on a small disk — a deviation to record
-The paper's `replay.size` is 10e6 steps. On disk that is **~38 GB** (measured
-3782 B/step, not the 19x compression a synthetic sample suggested), and
-DreamerV3 never deletes old chunks, so `scripts/prune_replay.py` has to keep
-the directory bounded.
+### E5b. Small disk — solved without touching the paper's settings
+The paper's `replay.size` is 10e6 steps. On disk that is ~38 GB (measured
+3782 B/step) and DreamerV3 never deletes old chunks, so the directory grows
+with the whole run: ~64 GB for 17M steps.
 
-If the machine cannot hold that, shrink it and **write the number down**:
+**These are two different things and only one of them is the paper's.**
+`replay.size` is the algorithm — how far back the world model can sample — and
+it lives in RAM. The files under `logdir/replay` exist only so a restart can
+refill that buffer: `Replay.save()` returns no manifest, and `Replay.load()`
+reads whatever `*.npz` files are present, newest first, up to `capacity`.
+Finding fewer is not an error; it just recovers less.
+
+So on a disk-constrained machine, shrink the **mirror**, never the buffer:
 
 ```bash
-./run.sh --replay.size 6e6     # ~23 GB disk, ~28 GB RAM
+SKYDREAMER_REPLAY_DISK_STEPS=4e6 ./run.sh      # ~19 GB disk, buffer still 10e6
 ```
 
-DreamerV3's own default is 5e6, so anything in 5e6..10e6 is well-trodden; it
-narrows how far back the world model can sample, which matters most for the
-long-horizon parameter identification the paper's phase 2 is aimed at.
+`scripts/prune_replay.py` enforces it every 10 minutes. The paper's settings
+are untouched; the only thing given up is how much of the buffer survives a
+crash. Shrinking `--replay.size` itself *would* be a deviation — record it if
+you ever have to.
 
 ### E5. Sensor noise — deliberately left at zero
 The ADR literature is clear that the dominant IMU error on a racing quad is

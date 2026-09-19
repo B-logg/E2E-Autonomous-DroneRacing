@@ -65,29 +65,42 @@ fi
 # DISK: chunks are written with np.savez_compressed but the binary masks
 # barely compress once the policy actually flies -- measured 3782 B/step on a
 # real run, only 1.2x. Worse, DreamerV3 never deletes old chunk files, so the
-# directory grows with the whole run, not the buffer window. scripts/
-# prune_replay.py keeps it bounded; without it 17M steps needs ~64 GB.
+# directory grows with the whole run, not the buffer window.
+#
+# The two are INDEPENDENT.  `replay.size` is the algorithm: how far back the
+# world model can sample, and it lives in RAM.  The files under logdir/replay
+# exist only so a restart can refill that buffer -- `Replay.save()` returns no
+# manifest and `Replay.load()` just reads whatever *.npz files are present,
+# newest first, up to `capacity`.  Finding fewer is not an error, it simply
+# recovers less.
+#
+# So on a small disk, keep the paper's replay.size and shrink only the mirror:
+#   SKYDREAMER_REPLAY_DISK_STEPS=4e6 ./run.sh
+# That is ~19 GB of disk with the buffer still at the paper's 10e6 in RAM.
+# The only thing given up is how much buffer survives a crash.
 REPLAY_STEPS=10000000
 TOTAL_STEPS=17000000
 RAM_NEED_GB=$(( REPLAY_STEPS * 4596 / 1000000000 ))
 # With the pruner running, disk is bounded by the buffer window (plus its
 # 1.25 margin) rather than by TOTAL_STEPS, plus ~9 GB of venv and CUDA wheels.
-DISK_NEED_GB=$(( REPLAY_STEPS * 3782 * 5 / 4 / 1000000000 + 9 ))
+DISK_STEPS=$(printf '%.0f' "${SKYDREAMER_REPLAY_DISK_STEPS:-${REPLAY_STEPS}}")
+DISK_NEED_GB=$(( DISK_STEPS * 3782 * 5 / 4 / 1000000000 + 9 ))
 DISK_GB=$(df -Pk "${ROOT}" | awk 'NR==2 {printf "%d", $4/1000000}')
 if command -v free >/dev/null 2>&1; then
   RAM_GB=$(free -g | awk '/^Mem:/ {print $2}')
 else
   RAM_GB=$(( $(sysctl -n hw.memsize 2>/dev/null || echo 0) / 1000000000 ))
 fi
-echo "needs ~${RAM_NEED_GB} GB RAM (uncompressed buffer) and ~${DISK_NEED_GB} GB disk (pruned)"
+echo "needs ~${RAM_NEED_GB} GB RAM (buffer ${REPLAY_STEPS} steps) and ~${DISK_NEED_GB} GB disk (mirror ${DISK_STEPS} steps)"
 echo "  available: ${RAM_GB} GB RAM, ${DISK_GB} GB disk free at ${ROOT}"
 
 if [ "${MODE}" != "smoke" ] && [ "${MODE}" != "setup" ]; then
   if [ "${DISK_GB}" -lt "${DISK_NEED_GB}" ]; then
     die "not enough disk: ${DISK_GB} GB free, need ~${DISK_NEED_GB} GB.
-     Shrink the buffer -- this DEVIATES from the paper's 10e6, so write it down:
-       ./run.sh --replay.size 6e6     (~28 GB of disk, ~28 GB of RAM)
-     DreamerV3's own default is 5e6, so this is a well-trodden setting."
+     Shrink the on-disk mirror instead -- this does NOT change the paper's
+     settings, it only limits how much buffer survives a restart:
+       SKYDREAMER_REPLAY_DISK_STEPS=4e6 ./run.sh --resume
+     Shrinking the buffer itself (--replay.size) WOULD deviate from the paper."
   fi
   if [ "${DISK_GB}" -lt $(( DISK_NEED_GB * 2 )) ]; then
     echo "NOTE: ${DISK_GB} GB disk is enough but not generous. Watch it with"
@@ -221,12 +234,8 @@ fi
 mkdir -p "${RUN_DIR}"
 
 # DreamerV3 never deletes replay chunks; without this the disk fills mid-run.
-REPLAY_SIZE="${REPLAY_STEPS}"
-for i in "${!EXTRA[@]}"; do
-  [ "${EXTRA[$i]}" = "--replay.size" ] && REPLAY_SIZE="${EXTRA[$((i+1))]}"
-done
 "${PY}" "${ROOT}/scripts/prune_replay.py" --logdir "${RUN_DIR}" \
-    --keep-steps "${REPLAY_SIZE}" --interval 600 >> "${RUN_DIR}/prune.log" 2>&1 &
+    --keep-steps "${DISK_STEPS}" --interval 600 >> "${RUN_DIR}/prune.log" 2>&1 &
 PRUNER=$!
 trap 'kill ${PRUNER} 2>/dev/null || true' EXIT
 

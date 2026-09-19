@@ -630,6 +630,20 @@ def test_replay_is_pruned_during_training():
     assert (ROOT / "scripts" / "prune_replay.py").exists()
 
 
+def test_disk_mirror_is_independent_of_replay_size():
+    """`replay.size` is the algorithm -- how far back the world model samples,
+    held in RAM -- and the paper fixes it at 10e6.  The files under
+    logdir/replay only let a restart refill that buffer: save() returns no
+    manifest and load() reads whatever *.npz are present, newest first, up to
+    capacity; finding fewer is not an error.  So a small disk is handled by
+    shrinking the mirror, never the buffer."""
+    src = (ROOT / "run.sh").read_text()
+    assert "SKYDREAMER_REPLAY_DISK_STEPS" in src
+    assert "--keep-steps \"${DISK_STEPS}\"" in src, "pruner must use the mirror size"
+    # and the buffer itself must still default to the paper's value
+    assert "REPLAY_STEPS=10000000" in src
+
+
 def test_video_logging_is_disabled():
     """DreamerV3's logfn stacks every uint8 ndim==3 observation and the `scope`
     output writes one mp4 per episode.  The 64x64 mask matches that test, so a
