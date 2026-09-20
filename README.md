@@ -110,11 +110,16 @@ Override paths with `SKYDREAMER_LOGDIR=/data/logs ./run.sh`.
 
 Two settings there matter more than the GPU, and one of them is easy to miss.
 
-**RAM is the binding constraint, not disk.** The paper's `replay.size` is 10e6
-steps (31 h of flight); each step is 4596 bytes and DreamerV3 keeps the working
-set **uncompressed in RAM** (`embodied/core/replay.py`, `self.chunks`), so the
-buffer is **~46 GB of RAM**. **Get 128 GB.** 64 GB has to hold that plus JAX
-plus 16 env workers — it may survive, it may OOM at hour 20.
+**RAM used to be the binding constraint; bit-packing removed it.** The paper's
+`replay.size` is 10e6 steps and DreamerV3 holds that buffer uncompressed in
+RAM. The 64x64 mask is binary but was stored one byte per pixel, so it is now
+packed eight pixels to a byte: **4596 -> 1005 bytes/step, a 46 GB buffer down
+to 10 GB.** The agent unpacks before the encoder, so the network sees
+bit-identical input and the paper's settings are untouched. **64 GB of RAM is
+now comfortable.**
+
+Note that `free` inside a container reports the *host's* memory — a vast.ai
+box with an 80 GB allocation prints 629 GB. `run.sh` reads the cgroup limit.
 
 **Disk is far smaller than RAM.** Chunks are written with
 `np.savez_compressed`, and the binary 64x64 masks compress about **19x**

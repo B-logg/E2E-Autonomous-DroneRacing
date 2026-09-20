@@ -226,14 +226,23 @@ def test_nominal_intrinsics():
 def test_policy_mask_is_64x64():
     """"The resulting masks are resized to a resolution of 64x64"."""
     assert IMAGE_SIZE == 64
+    from skydreamer.env import PACK_MASK, unpack_mask
+
     _, obs = reset(jax.random.key(0), EnvConfig(track=T.inverted_loop()))
-    assert obs["mask"].shape == (64, 64, 1)  # trailing channel for the CNN
+    # Stored bit-packed to keep the replay buffer in RAM; what matters is the
+    # resolution the encoder receives after unpacking.
+    assert obs["mask"].shape == ((64, 8, 1) if PACK_MASK else (64, 64, 1))
+    full = unpack_mask(obs["mask"]) if PACK_MASK else obs["mask"][..., 0]
+    assert full.shape == (64, 64)
 
 
 def test_mask_is_binary():
     """X in {0,1}^{HxW}."""
+    from skydreamer.env import PACK_MASK, unpack_mask
+
     _, obs = reset(jax.random.key(3), EnvConfig(track=T.inverted_loop()))
-    assert set(np.unique(np.asarray(obs["mask"]))) <= {0.0, 1.0}
+    full = unpack_mask(obs["mask"]) if PACK_MASK else obs["mask"][..., 0] / 255
+    assert set(np.unique(np.asarray(full))) <= {0.0, 1.0}
 
 
 def test_gate_sizes():
@@ -549,7 +558,9 @@ def test_architecture_is_stock_dreamerv3(cfg):
     assert d["enc"]["typ"] == "simple"        # CNN for images, MLP for vectors
     assert d["dec"]["typ"] == "simple"
     assert d["policy_dist_cont"] == "bounded_normal"   # Gaussian actor
-    assert set(sd) <= {"informed", "imag_loss", "imag_length"}, sd
+    # `packbits` is storage only -- the encoder is handed the same full
+    # resolution either way (test_bit_packing_is_lossless_and_matches_the_agent).
+    assert set(sd) <= {"informed", "packbits", "imag_loss", "imag_length"}, sd
 
 
 @dv3
@@ -614,6 +625,44 @@ def test_parallel_envs_get_distinct_seeds(cfg):
 # ==========================================================================
 # GPU-deployment invariants (not paper values, but run-breaking if wrong)
 # ==========================================================================
+
+
+def test_bit_packing_is_lossless_and_matches_the_agent():
+    """The mask is stored eight pixels to a byte so the replay buffer fits in
+    RAM (46 GB -> 10 GB at the paper's replay.size).  This is only legitimate
+    if the encoder ends up with bit-identical input, so check the env's
+    packing against the *agent's* unpacking -- two separate implementations,
+    one in skydreamer/env.py and one in patches/informed_dreamer.patch."""
+    from skydreamer.env import pack_mask
+
+    rng = np.random.default_rng(0)
+    for _ in range(50):
+        m = jnp.asarray((rng.random((64, 64)) > rng.uniform(0.5, 0.99)).astype(np.float32))
+        packed = np.asarray(pack_mask(m))
+
+        # the agent's expansion, transcribed from the patch
+        shifts = np.arange(7, -1, -1, dtype=np.uint8)
+        bits = ((packed[..., None] >> shifts) & 1).astype(np.uint8) * 255
+        bits = np.moveaxis(bits, -2, -1)
+        agent_view = bits.reshape(*packed.shape[:-2], packed.shape[-2] * 8, packed.shape[-1])
+
+        # what the encoder would have seen without packing
+        direct = (np.asarray(m) > 0.5).astype(np.uint8)[..., None] * 255
+        assert np.array_equal(agent_view, direct)
+
+
+def test_agent_unpacks_before_the_encoder():
+    """Packing must not leak into the model: the encoder's declared space has
+    to be the full resolution, and both entry points that feed it have to
+    unpack first."""
+    src = (DV3 / "dreamerv3" / "agent.py").read_text() if DV3.exists() else None
+    if src is None:
+        pytest.skip("run ./run.sh --setup-only first")
+    assert "enc_space[key] = elements.Space(np.uint8, (h, w8 * 8, c))" in src
+    for entry in ("def policy(self, carry, obs, mode='train'):",
+                  "def loss(self, carry, obs, prevact, training):"):
+        i = src.index(entry)
+        assert "obs = self._unpack(obs)" in src[i:i + 200], entry
 
 
 def test_replay_is_pruned_during_training():

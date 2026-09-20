@@ -20,6 +20,7 @@ from skydreamer.dynamics import (
 )
 from skydreamer.env import EnvConfig, batched, gates_passed, reset
 from skydreamer.env import step as env_step  # dynamics.step shadows this name
+from skydreamer.env import unpack_mask
 from skydreamer.params import GRAVITY, NOMINAL, DynParams
 from skydreamer.render import render_mask
 
@@ -258,7 +259,7 @@ def _delay_probe(cfg, n):
     for _ in range(n):
         st, obs, *_ = env_step(st, jnp.full((4,), 0.45), cfg)
         truth.append(np.asarray(st.mask_buf[-1]))  # freshly rendered this step
-        seen.append(np.asarray(obs["mask"][..., 0]))
+        seen.append(np.asarray(unpack_mask(obs["mask"])))
     return truth, seen
 
 

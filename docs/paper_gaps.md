@@ -275,28 +275,33 @@ one. SkyDreamer's Table III uses +-20% (eval) to +-30% (train), with `tau`
 included. That is consistent with the literature, so **we changed nothing** --
 noted here only so nobody "fixes" it later.
 
-### E5b. Small disk — solved without touching the paper's settings
-The paper's `replay.size` is 10e6 steps. On disk that is ~38 GB (measured
-3782 B/step) and DreamerV3 never deletes old chunks, so the directory grows
-with the whole run: ~64 GB for 17M steps.
+### E5b. Memory — solved by packing, not by shrinking the buffer
+The paper's `replay.size` is 10e6 steps. DreamerV3 holds that buffer
+**uncompressed in RAM** (`embodied/core/replay.py`, `self.chunks`), and at 4596
+bytes/step that is **46 GB** — more than a typical rented instance allocates.
 
-**These are two different things and only one of them is the paper's.**
-`replay.size` is the algorithm — how far back the world model can sample — and
-it lives in RAM. The files under `logdir/replay` exist only so a restart can
-refill that buffer: `Replay.save()` returns no manifest, and `Replay.load()`
-reads whatever `*.npz` files are present, newest first, up to `capacity`.
-Finding fewer is not an error; it just recovers less.
+The obvious fix, lowering `replay.size`, *is* a deviation. A better one is not:
+the 64x64 mask is binary but stored one byte per pixel, so 4096 of those 4596
+bytes carry 4096 *bits*. Packing them eight to a byte gives:
 
-So on a disk-constrained machine, shrink the **mirror**, never the buffer:
+| | before | after |
+|---|---|---|
+| bytes/step | 4596 | **1005** |
+| buffer at 10e6 | 46 GB | **10 GB** |
 
-```bash
-SKYDREAMER_REPLAY_DISK_STEPS=4e6 ./run.sh      # ~19 GB disk, buffer still 10e6
-```
+The agent expands it back before the encoder (`packbits` in
+`patches/informed_dreamer.patch`), so the CNN receives bit-identical input.
+`test_bit_packing_is_lossless_and_matches_the_agent` checks the env's packing
+against the agent's unpacking — two separate implementations — on random
+masks, and `test_agent_unpacks_before_the_encoder` checks that the encoder's
+declared space is the full resolution.
 
-`scripts/prune_replay.py` enforces it every 10 minutes. The paper's settings
-are untouched; the only thing given up is how much of the buffer survives a
-crash. Shrinking `--replay.size` itself *would* be a deviation — record it if
-you ever have to.
+**This is storage, not modelling**, so the paper's settings stand unchanged.
+
+Disk is separate and smaller: chunks are written with `np.savez_compressed`
+(measured 3782 B/step before packing) and never pruned, so
+`scripts/prune_replay.py` bounds the directory. See
+`SKYDREAMER_REPLAY_DISK_STEPS` in `run.sh`.
 
 ### E5. Sensor noise — deliberately left at zero
 The ADR literature is clear that the dominant IMU error on a racing quad is

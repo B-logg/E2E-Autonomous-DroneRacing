@@ -137,8 +137,14 @@ class SkyDreamer:
         el = _spaces()
         n = self._size
         vec = lambda d: el.Space(np.float32, (d,))  # noqa: E731
+        from .env import PACK_MASK
+
+        # Bit-packed: eight pixels per byte.  The agent's `packbits` config
+        # names this key and expands it back to (n, n, 1) before the encoder,
+        # so what the CNN sees is unchanged.
+        mask_shape = (n, n // 8, 1) if PACK_MASK else (n, n, 1)
         out = {
-            "mask": el.Space(np.uint8, (n, n, 1)),
+            "mask": el.Space(np.uint8, mask_shape),
             "rates": vec(3),
             "rpm": vec(4),
             "flight_plan": vec(T.FLIGHT_PLAN_DIM),
@@ -208,7 +214,8 @@ class SkyDreamer:
         out = {}
         for k, v in obs.items():
             v = np.asarray(v)
-            out[k] = (v > 0.5).astype(np.uint8) * 255 if k == "mask" else v.astype(np.float32)
+            # the env already emits `mask` as uint8 (packed or 0/255)
+            out[k] = v.astype(np.uint8) if k == "mask" else v.astype(np.float32)
         out.update(
             reward=np.float32(reward),
             is_first=is_first,

@@ -62,6 +62,14 @@ MAX_STEPS = 2000
 GYRO_NOISE_STD = 0.0  # rad/s
 RPM_NOISE_STD = 0.0  # rad/s
 
+# The mask is binary but stored one byte per pixel, and DreamerV3 keeps the
+# replay buffer uncompressed in RAM: 4096 of the 4596 bytes/step carry 4096
+# *bits* of information.  Packing them 8-to-a-byte turns the paper's 10e6-step
+# buffer from 46 GB into 10 GB.  The agent unpacks before the encoder (see
+# `packbits` in patches/informed_dreamer.patch), so the network sees
+# bit-identical input -- this is storage, not modelling.
+PACK_MASK = True
+
 
 class EnvConfig(NamedTuple):
     track: Track
@@ -218,6 +226,23 @@ def _gate_relative(state: EnvState, cfg: EnvConfig):
     return p_g, v_g, yaw
 
 
+def pack_mask(mask: jax.Array) -> jax.Array:
+    """(H, W) in {0,1} -> (H, W//8, 1) uint8, eight pixels per byte."""
+    h, w = mask.shape
+    bits = (mask > 0.5).astype(jnp.uint8).reshape(h, w // 8, 8)
+    weights = (1 << jnp.arange(7, -1, -1)).astype(jnp.uint32)
+    return (bits.astype(jnp.uint32) * weights).sum(-1).astype(jnp.uint8)[..., None]
+
+
+def unpack_mask(packed: jax.Array) -> jax.Array:
+    """Inverse of `pack_mask`, for tests and visualisation."""
+    shifts = jnp.arange(7, -1, -1, dtype=jnp.uint8)
+    bits = ((packed[..., None] >> shifts) & 1).astype(jnp.uint8)
+    bits = jnp.moveaxis(bits, -2, -1)
+    h, w8, c = packed.shape
+    return bits.reshape(h, w8 * 8, c)[..., 0].astype(jnp.float32)
+
+
 def observe(state: EnvState, cfg: EnvConfig) -> dict:
     k1, k2 = jax.random.split(jax.random.fold_in(state.key, state.step_count), 2)
 
@@ -231,7 +256,10 @@ def observe(state: EnvState, cfg: EnvConfig) -> dict:
 
     return {
         # --- observation o_t: what the policy sees at deployment ---
-        "mask": state.mask_buf[0][..., None],
+        "mask": (
+            pack_mask(state.mask_buf[0]) if PACK_MASK
+            else state.mask_buf[0][..., None].astype(jnp.uint8) * 255
+        ),
         "rates": omega_meas,
         "rpm": rpm_norm,
         "flight_plan": fp,

@@ -1,8 +1,8 @@
 diff --git a/dreamerv3/agent.py b/dreamerv3/agent.py
-index 0cada34..8c5bf9a 100644
+index 0cada34..3599b01 100644
 --- a/dreamerv3/agent.py
 +++ b/dreamerv3/agent.py
-@@ -36,8 +36,20 @@ class Agent(embodied.jax.Agent):
+@@ -36,8 +36,31 @@ class Agent(embodied.jax.Agent):
      self.config = config
  
      exclude = ('is_first', 'is_last', 'is_terminal', 'reward')
@@ -22,10 +22,43 @@ index 0cada34..8c5bf9a 100644
 +        if k not in exclude and (is_info(k) if informed else True)}
 +    assert enc_space, 'encoder has no inputs'
 +    assert dec_space, 'decoder has no targets; informed=True needs info_* keys'
++
++    # Bit-packed observations.  A binary 64x64 mask stored one byte per pixel
++    # wastes 8x the memory it needs, and DreamerV3 holds the replay buffer
++    # uncompressed in RAM, so packing turns a 46 GB buffer into 10 GB.  The
++    # packing is lossless and is undone before the encoder, so the network
++    # sees bit-identical input: this is a storage change, not a modelling one.
++    self.packbits = tuple(x for x in config.packbits.split(',') if x)
++    for key in self.packbits:
++      assert key in enc_space, (key, sorted(enc_space))
++      h, w8, c = enc_space[key].shape
++      enc_space[key] = elements.Space(np.uint8, (h, w8 * 8, c))
      self.enc = {
          'simple': rssm.Encoder,
      }[config.enc.typ](enc_space, **config.enc[config.enc.typ], name='enc')
-@@ -123,11 +135,28 @@ class Agent(embodied.jax.Agent):
+@@ -112,7 +135,21 @@ class Agent(embodied.jax.Agent):
+   def init_report(self, batch_size):
+     return self.init_policy(batch_size)
+ 
++  def _unpack(self, obs):
++    """Expand bit-packed uint8 keys back to one byte per pixel."""
++    if not self.packbits:
++      return obs
++    obs = dict(obs)
++    shifts = jnp.arange(7, -1, -1, dtype=jnp.uint8)
++    for key in self.packbits:
++      x = obs[key]                                   # (..., H, W//8, C)
++      bits = ((x[..., None] >> shifts) & 1).astype(jnp.uint8) * 255
++      bits = jnp.moveaxis(bits, -2, -1)              # (..., H, W//8, 8, C)
++      obs[key] = bits.reshape(*x.shape[:-2], x.shape[-2] * 8, x.shape[-1])
++    return obs
++
+   def policy(self, carry, obs, mode='train'):
++    obs = self._unpack(obs)
+     (enc_carry, dyn_carry, dec_carry, prevact) = carry
+     kw = dict(training=False, single=True)
+     reset = obs['is_first']
+@@ -123,11 +160,28 @@ class Agent(embodied.jax.Agent):
      if dec_carry:
        dec_carry, dec_entry, recons = self.dec(dec_carry, feat, reset, **kw)
      policy = self.pol(self.feat2tensor(feat), bdims=1)
@@ -55,7 +88,15 @@ index 0cada34..8c5bf9a 100644
      carry = (enc_carry, dyn_carry, dec_carry, act)
      if self.config.replay_context:
        out.update(elements.tree.flatdict(dict(
-@@ -389,6 +418,7 @@ def imag_loss(
+@@ -154,6 +208,7 @@ class Agent(embodied.jax.Agent):
+     return carry, outs, metrics
+ 
+   def loss(self, carry, obs, prevact, training):
++    obs = self._unpack(obs)
+     enc_carry, dyn_carry, dec_carry = carry
+     reset = obs['is_first']
+     B, T = reset.shape
+@@ -389,6 +444,7 @@ def imag_loss(
      horizon=333,
      lam=0.95,
      actent=3e-4,
@@ -63,7 +104,7 @@ index 0cada34..8c5bf9a 100644
      slowreg=1.0,
  ):
    losses = {}
-@@ -412,6 +442,24 @@ def imag_loss(
+@@ -412,6 +468,24 @@ def imag_loss(
    ents = {k: v.entropy()[:, :-1] for k, v in policy.items()}
    policy_loss = sg(weight[:, :-1]) * -(
        logpi * sg(adv_normed) + actent * sum(ents.values()))
@@ -89,7 +130,7 @@ index 0cada34..8c5bf9a 100644
  
    voffset, vscale = valnorm(ret, update)
 diff --git a/dreamerv3/configs.yaml b/dreamerv3/configs.yaml
-index 786b67e..46e7345 100644
+index 786b67e..0cf3c13 100644
 --- a/dreamerv3/configs.yaml
 +++ b/dreamerv3/configs.yaml
 @@ -35,6 +35,7 @@ defaults:
@@ -100,17 +141,18 @@ index 786b67e..46e7345 100644
  
    replay:
      size: 5e6
-@@ -83,6 +84,9 @@ defaults:
+@@ -83,6 +84,10 @@ defaults:
      coordinator_address: ''
  
    agent:
 +    informed: False
 +    decode_in_policy: False
 +    deterministic_eval: True
++    packbits: ''
      loss_scales: {rec: 1.0, rew: 1.0, con: 1.0, dyn: 1.0, rep: 0.1, policy: 1.0, value: 1.0, repval: 0.3}
      opt: {lr: 4e-5, agc: 0.3, eps: 1e-20, beta1: 0.9, beta2: 0.999, momentum: True, wd: 0.0, schedule: const, warmup: 1000, anneal: 0}
      ac_grads: False
-@@ -94,7 +98,7 @@ defaults:
+@@ -94,7 +99,7 @@ defaults:
        simple: {depth: 64, mults: [2, 3, 4, 4], layers: 3, units: 1024, act: silu, norm: rms, winit: trunc_normal_in, symlog: True, outer: False, kernel: 5, strided: False}
      dec:
        typ: simple
@@ -119,7 +161,7 @@ index 786b67e..46e7345 100644
      rewhead: {layers: 1, units: 1024, act: silu, norm: rms, output: symexp_twohot, outscale: 0.0, winit: trunc_normal_in, bins: 255}
      conhead: {layers: 1, units: 1024, act: silu, norm: rms, output: binary, outscale: 1.0, winit: trunc_normal_in}
      policy: {layers: 3, units: 1024, act: silu, norm: rms, minstd: 0.1, maxstd: 1.0, outscale: 0.01, unimix: 0.01, winit: trunc_normal_in}
-@@ -105,7 +109,7 @@ defaults:
+@@ -105,7 +110,7 @@ defaults:
      imag_length: 15
      horizon: 333
      contdisc: True
@@ -128,7 +170,7 @@ index 786b67e..46e7345 100644
      repl_loss: {slowtar: False, lam: 0.95, slowreg: 1.0}
      slowvalue: {rate: 0.02, every: 1}
      retnorm: {impl: perc, rate: 0.01, limit: 1.0, perclo: 5.0, perchi: 95.0, debias: False}
-@@ -195,6 +199,41 @@ loconav:
+@@ -195,6 +200,43 @@ loconav:
    env.loconav.repeat: 1
    run.train_ratio: 256
  
@@ -144,6 +186,7 @@ index 786b67e..46e7345 100644
 +  replay.size: 10e6
 +  agent:
 +    informed: True
++    packbits: mask
 +    imag_loss: {slowtar: True, actsmooth: 0.002}
 +    imag_length: 16
 +  run: {steps: 17e6, train_ratio: 128, envs: 16}
@@ -159,6 +202,7 @@ index 786b67e..46e7345 100644
 +  replay.size: 10e6
 +  agent:
 +    informed: True
++    packbits: mask
 +    imag_loss: {slowtar: True, actsmooth: 0.002}
 +    imag_length: 16
 +    enc.simple.symlog: False
