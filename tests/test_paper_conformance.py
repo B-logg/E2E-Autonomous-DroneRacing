@@ -629,26 +629,45 @@ def test_parallel_envs_get_distinct_seeds(cfg):
 
 def test_bit_packing_is_lossless_and_matches_the_agent():
     """The mask is stored eight pixels to a byte so the replay buffer fits in
-    RAM (46 GB -> 10 GB at the paper's replay.size).  This is only legitimate
-    if the encoder ends up with bit-identical input, so check the env's
-    packing against the *agent's* unpacking -- two separate implementations,
-    one in skydreamer/env.py and one in patches/informed_dreamer.patch."""
+    RAM (46 GB -> 10 GB at the paper's replay.size).  That is only legitimate
+    if the encoder ends up with bit-identical input.
+
+    This calls the **real** `Agent._unpack` from the patched checkout rather
+    than a copy of its logic, so the test cannot drift away from the patch.
+    `_unpack` touches nothing but `self.packbits`, so an unbound call with a
+    stub is faithful.
+
+    Ranks matter: live observations arrive as (batch, time, H, W//8, C), and a
+    reshape that is right for a single frame can still scramble the leading
+    dimensions."""
+    if not DV3.exists():
+        pytest.skip("run ./run.sh --setup-only first")
+    import sys
+    import types
+
+    sys.path.insert(0, str(DV3))
+    try:
+        from dreamerv3.agent import Agent
+    except ImportError as e:
+        # the dev venv does not carry DreamerV3's dependencies; this test runs
+        # in the runtime venv that run.sh builds
+        pytest.skip(f"patched dreamerv3 not importable here: {e}")
+
     from skydreamer.env import pack_mask
 
+    stub = types.SimpleNamespace(packbits=("mask",))
     rng = np.random.default_rng(0)
-    for _ in range(50):
-        m = jnp.asarray((rng.random((64, 64)) > rng.uniform(0.5, 0.99)).astype(np.float32))
-        packed = np.asarray(pack_mask(m))
-
-        # the agent's expansion, transcribed from the patch
-        shifts = np.arange(7, -1, -1, dtype=np.uint8)
-        bits = ((packed[..., None] >> shifts) & 1).astype(np.uint8) * 255
-        bits = np.moveaxis(bits, -2, -1)
-        agent_view = bits.reshape(*packed.shape[:-2], packed.shape[-2] * 8, packed.shape[-1])
-
-        # what the encoder would have seen without packing
-        direct = (np.asarray(m) > 0.5).astype(np.uint8)[..., None] * 255
-        assert np.array_equal(agent_view, direct)
+    for lead in [(), (3,), (2, 5)]:
+        n = max(1, int(np.prod(lead)))
+        masks = [(rng.random((64, 64)) > rng.uniform(0.5, 0.95)).astype(np.float32)
+                 for _ in range(n)]
+        packed = np.stack([np.asarray(pack_mask(jnp.asarray(m))) for m in masks])
+        packed = packed.reshape(*lead, 64, 8, 1)
+        got = np.asarray(Agent._unpack(stub, {"mask": jnp.asarray(packed)})["mask"])
+        want = np.stack([(m > 0.5).astype(np.uint8) * 255 for m in masks])
+        want = want.reshape(*lead, 64, 64, 1)
+        assert got.shape == want.shape, (lead, got.shape, want.shape)
+        assert np.array_equal(got, want), lead
 
 
 def test_agent_unpacks_before_the_encoder():
