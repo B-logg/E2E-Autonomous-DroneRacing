@@ -161,6 +161,24 @@ The **ladder's** virtual gates are still ours. The text constrains them only
 as "a full 360° left turn, and flies back over it" with the drone "remaining
 mostly within 1 m of the gate". Expect to iterate here.
 
+### B2b. No termination for a diverging simulation — 🔴 (we had to add one)
+The moment equation includes gyroscopic coupling (`J_x q r` and friends) that
+is **quadratic in the body rates**, and the model carries **no rotational
+damping term at all**. So a policy that spins the drone up drives a positive
+feedback loop: 100 rad/s already produces 8900 rad/s^2, and RK4 at 2.2 ms
+eventually reaches NaN. DreamerV3 asserts on non-finite observations, so the
+run dies -- ours did, at 12k steps.
+
+The paper's only termination conditions are gate collision and ground
+collision; neither catches this. Either they never hit it, or they have a
+guard they do not mention.
+
+**Our default:** terminate when `max|Omega| > 50 rad/s` or the state goes
+non-finite, with the usual zero terminal reward. 50 rad/s is far outside
+anything physical -- the rate penalty clips at `||Omega||_1 = 17`, a real
+inverted loop is about 10 rad/s, and the flight controller's gyro saturates
+well below 50 -- so this cannot cut off legitimate flight.
+
 ### B3. Sensor noise on `Omega_hat` and `omega_hat` — 🟡
 The paper is explicit that the privileged information carries *ground-truth*
 rates "not the measured ones", which only means something if the measured ones

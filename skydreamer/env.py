@@ -330,7 +330,8 @@ def step(state: EnvState, action: jax.Array, cfg: EnvConfig):
 
     euler = quat_to_euler(s_next.q)
     hit_ground = trk.ground_collision(s_next.p, s_next.v, euler)
-    terminal = hit_gate | hit_ground
+    blew_up = trk.diverged(s_next.omega_b, s_next.p, s_next.v)
+    terminal = hit_gate | hit_ground | blew_up
     reward = jnp.where(terminal, 0.0, reward)  # II-C: terminal reward is zero
 
     plane = state.plane + passed.astype(jnp.int32)

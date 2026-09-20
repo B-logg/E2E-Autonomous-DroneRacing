@@ -343,3 +343,42 @@ def test_every_table_two_coefficient_is_transcribed():
         "k_r5": 3.24e-4, "k_r6": 3.24e-4, "k_r7": 3.24e-4, "k_r8": 3.24e-4,
     }
     assert NOMINAL == expected
+
+
+def test_divergence_guard_keeps_nan_out_of_observations():
+    """The moment equation's gyroscopic coupling is quadratic in the body rates
+    and the model has no rotational damping, so a spinning drone runs away:
+    100 rad/s already gives 8900 rad/s^2, and RK4 at 2.2 ms eventually reaches
+    NaN.  That killed a real run at 12k steps -- DreamerV3 asserts on
+    non-finite observations, and by then the buffer is already polluted.
+
+    Adversarial commands across many seeds must never produce a non-finite
+    observation."""
+    cfg = EnvConfig(track=T.inverted_loop())
+    ended_by_spin = 0
+    for seed in range(40):
+        st, obs = reset(jax.random.key(seed), cfg)
+        for t in range(400):
+            u = jnp.array([1.0, 0.0, 1.0, 0.0]) if (t // 40) % 2 == 0 else jnp.array(
+                [0.0, 1.0, 0.0, 1.0])
+            st, obs, r, term, trunc = env_step(st, u, cfg)
+            for v in obs.values():
+                assert bool(jnp.all(jnp.isfinite(v))), (seed, t)
+            assert bool(jnp.isfinite(r))
+            if bool(term):
+                if float(jnp.max(jnp.abs(st.s.omega_b))) > T.RATE_DIVERGENCE:
+                    ended_by_spin += 1
+                break
+    assert ended_by_spin > 0, "the guard never fired; the stress test is too gentle"
+
+
+def test_divergence_threshold_leaves_real_maneuvers_alone():
+    """The paper's inverted loop is about 10 rad/s (13 m/s on a 1.35 m radius)
+    and its rate penalty clips at ||Omega||_1 = 17, so the guard must sit well
+    above both or it would cut off legitimate flight."""
+    assert T.RATE_DIVERGENCE >= 3 * T.RATE_CLIP
+    ok = jnp.array([15.0, 15.0, 15.0])          # harder than any paper maneuver
+    assert not bool(T.diverged(ok, jnp.zeros(3), jnp.zeros(3)))
+    assert bool(T.diverged(jnp.array([60.0, 0.0, 0.0]), jnp.zeros(3), jnp.zeros(3)))
+    nan = jnp.array([jnp.nan, 0.0, 0.0])
+    assert bool(T.diverged(nan, jnp.zeros(3), jnp.zeros(3)))

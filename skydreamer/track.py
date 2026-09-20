@@ -127,6 +127,32 @@ def gate_collision(p_g: jax.Array, d_g: float) -> jax.Array:
     return off / d_g > 1.0
 
 
+# NOT FROM THE PAPER.  The moment equation carries gyroscopic coupling
+# (J_x q r etc.) that is quadratic in the body rates, and the model has no
+# rotational damping at all, so a policy that spins the drone up drives a
+# positive feedback loop: 100 rad/s already produces 8900 rad/s^2.  RK4 at
+# 2.2 ms eventually diverges to NaN, which then poisons the replay buffer and
+# kills the run.  The paper's termination conditions do not cover this.
+#
+# 50 rad/s is far outside anything physical: the rate penalty clips at
+# ||Omega||_1 = 17, a real inverted loop at 13 m/s and 1.35 m radius is about
+# 10 rad/s, and the flight controller's gyro saturates well below 50.  A drone
+# there has already failed, so ending the episode (reward 0, like any other
+# crash) is both safe and faithful.
+RATE_DIVERGENCE = 50.0  # rad/s, per axis
+
+
+def diverged(omega_b: jax.Array, p_w: jax.Array, v_w: jax.Array) -> jax.Array:
+    """True once the integration has left the physically meaningful region."""
+    spun = jnp.max(jnp.abs(omega_b), axis=-1) > RATE_DIVERGENCE
+    finite = (
+        jnp.all(jnp.isfinite(omega_b), axis=-1)
+        & jnp.all(jnp.isfinite(p_w), axis=-1)
+        & jnp.all(jnp.isfinite(v_w), axis=-1)
+    )
+    return spun | ~finite
+
+
 def ground_collision(p_w: jax.Array, v_w: jax.Array, euler: jax.Array) -> jax.Array:
     """z_w > -0.5 and (v_z > 1.0 or |phi| > pi/3 or |theta| > pi/3).
 
