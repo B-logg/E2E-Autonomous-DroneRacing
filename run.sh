@@ -158,14 +158,30 @@ echo "python: $(${PY} -V)"
 # --------------------------------------------------------------------------
 log "DreamerV3 @ ${DV3_COMMIT:0:7} + SkyDreamer patch"
 # --------------------------------------------------------------------------
+# Stamp the checkout with the patch it was built from.  `git pull` updates the
+# patch file but cannot touch an already-patched third_party/, so without this
+# a pulled fix is silently ignored and the run uses stale code.
+if command -v sha256sum >/dev/null 2>&1; then
+  PATCH_HASH=$(sha256sum "${ROOT}/patches/informed_dreamer.patch" | cut -d' ' -f1)
+else
+  PATCH_HASH=$(shasum -a 256 "${ROOT}/patches/informed_dreamer.patch" | cut -d' ' -f1)
+fi
+STAMP="${DV3_DIR}/.skydreamer-patch"
+
+if [ -d "${DV3_DIR}/.git" ] && [ "$(cat "${STAMP}" 2>/dev/null)" != "${PATCH_HASH}" ]; then
+  echo "patch has changed since this checkout was made -- recreating it"
+  rm -rf "${DV3_DIR}"
+fi
+
 if [ ! -d "${DV3_DIR}/.git" ]; then
   mkdir -p "$(dirname "${DV3_DIR}")"
   git clone --quiet https://github.com/danijar/dreamerv3.git "${DV3_DIR}"
   git -C "${DV3_DIR}" checkout --quiet --detach "${DV3_COMMIT}"
   git -C "${DV3_DIR}" apply "${ROOT}/patches/informed_dreamer.patch"
-  echo "patched"
+  echo "${PATCH_HASH}" > "${STAMP}"
+  echo "patched (${PATCH_HASH:0:12})"
 else
-  echo "already present (delete third_party/ to redo)"
+  echo "already present and up to date (${PATCH_HASH:0:12})"
 fi
 
 # --------------------------------------------------------------------------
