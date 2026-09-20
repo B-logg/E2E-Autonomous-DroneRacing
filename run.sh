@@ -86,13 +86,32 @@ RAM_NEED_GB=$(( REPLAY_STEPS * 4596 / 1000000000 ))
 DISK_STEPS=$(printf '%.0f' "${SKYDREAMER_REPLAY_DISK_STEPS:-${REPLAY_STEPS}}")
 DISK_NEED_GB=$(( DISK_STEPS * 3782 * 5 / 4 / 1000000000 + 9 ))
 DISK_GB=$(df -Pk "${ROOT}" | awk 'NR==2 {printf "%d", $4/1000000}')
-if command -v free >/dev/null 2>&1; then
+# `free` inside a container reports the HOST's memory, not the cgroup limit --
+# a vast.ai box with an 80 GB allocation happily prints 629 GB. Read the limit
+# the kernel will actually enforce, and only fall back to `free` when there
+# isn't one.
+RAM_BYTES=""
+for f in /sys/fs/cgroup/memory.max /sys/fs/cgroup/memory/memory.limit_in_bytes; do
+  [ -r "${f}" ] || continue
+  v=$(cat "${f}" 2>/dev/null)
+  case "${v}" in
+    ''|max|*[!0-9]*) continue ;;
+  esac
+  # cgroup v1 reports a huge sentinel when unlimited
+  [ "${v}" -lt 1000000000000000 ] && RAM_BYTES="${v}" && break
+done
+if [ -n "${RAM_BYTES}" ]; then
+  RAM_GB=$(( RAM_BYTES / 1000000000 ))
+  RAM_SRC="cgroup limit"
+elif command -v free >/dev/null 2>&1; then
   RAM_GB=$(free -g | awk '/^Mem:/ {print $2}')
+  RAM_SRC="free (no cgroup limit found)"
 else
   RAM_GB=$(( $(sysctl -n hw.memsize 2>/dev/null || echo 0) / 1000000000 ))
+  RAM_SRC="sysctl"
 fi
 echo "needs ~${RAM_NEED_GB} GB RAM (buffer ${REPLAY_STEPS} steps) and ~${DISK_NEED_GB} GB disk (mirror ${DISK_STEPS} steps)"
-echo "  available: ${RAM_GB} GB RAM, ${DISK_GB} GB disk free at ${ROOT}"
+echo "  available: ${RAM_GB} GB RAM (${RAM_SRC}), ${DISK_GB} GB disk free at ${ROOT}"
 
 if [ "${MODE}" != "smoke" ] && [ "${MODE}" != "setup" ]; then
   if [ "${DISK_GB}" -lt "${DISK_NEED_GB}" ]; then
