@@ -7,7 +7,10 @@ arrive a failure is a data problem rather than a code problem.
 
 import numpy as np
 import pytest
-import torch
+
+# GateNet is PyTorch and is not part of the simulation training loop, so the
+# runtime venv run.sh builds does not carry torch.  Skip rather than error.
+torch = pytest.importorskip("torch")
 
 from skydreamer.gatenet.data import augment_geometric, augment_photometric
 from skydreamer.gatenet.losses import SCALE_WEIGHTS, dice_loss, downsample_to, iou, multiscale_loss
