@@ -436,6 +436,103 @@ def test_eval_feeds_the_agent_the_mask_training_fed_it():
     assert not np.array_equal(corrupted, raw)
 
 
+def test_chase_view_renders_the_simulated_world():
+    """The third-person panel used to be a matplotlib line drawing of recorded
+    numbers.  This renders the scene with the simulator's own ray caster --
+    gates from `render_mask`, floor from intersecting the same rays with the
+    ground plane the dynamics terminate on -- so it is a picture of the
+    environment rather than a plot of it."""
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location(
+        "sd_visualize", pathlib.Path(__file__).resolve().parents[1] / "scripts" / "visualize.py"
+    )
+    viz = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(viz)
+
+    tr = T.inverted_loop()
+    gate = np.asarray(tr.pos[0])
+    yaw = float(tr.yaw[0])
+    # Sit 5 m before gate 1, flying at it level.
+    p = jnp.array([gate[0] - 5 * np.cos(yaw), gate[1] - 5 * np.sin(yaw), gate[2]])
+    q = euler_to_quat(jnp.array(0.0), jnp.array(0.0), jnp.array(yaw))
+
+    img, uv = viz.chase_view(p, q, tr, res=64)
+    assert img.shape == (64, 64, 3)
+
+    colours = {tuple(np.round(c, 3)) for c in img.reshape(-1, 3)}
+    assert len(colours) >= 3, "expected at least sky, floor and gate"
+    assert tuple(np.round(viz._rgb(viz.INK), 3)) in colours, "no gate in view"
+    assert tuple(np.round(viz._rgb(viz.FLOOR), 3)) in colours, "no ground in view"
+
+    # The chase camera sits behind the drone, so the drone must project into
+    # the frame -- that is the whole point of the viewpoint.
+    assert uv is not None
+    assert 0 <= uv[0] < 64 and 0 <= uv[1] < 64, uv
+
+
+def test_env_records_why_the_episode_ended():
+    """`done` is one bool, which is all the agent needs and useless for working
+    out why a policy fails.  Flying into a gate, mushing into the floor and
+    tumbling out of control want different fixes."""
+    cfg = EnvConfig(track=T.inverted_loop())
+    st, _ = reset(jax.random.key(0), cfg)
+    assert int(st.term_cause) == 0, "a fresh episode has not ended"
+
+    seen = set()
+    for seed in range(30):
+        st, _ = reset(jax.random.key(seed), cfg)
+        # Alternating opposite motor pairs spins the drone up; a low uniform
+        # command just drops it.  Between them both failure modes appear.
+        spin = seed % 2 == 0
+        for t in range(400):
+            if spin:
+                u = jnp.array([1.0, 0.0, 1.0, 0.0]) if (t // 40) % 2 == 0 else jnp.array(
+                    [0.0, 1.0, 0.0, 1.0])
+            else:
+                u = jnp.full((4,), 0.05)
+            st, _, _, term, _ = env_step(st, u, cfg)
+            if bool(term):
+                cause = int(st.term_cause)
+                assert cause != 0, "terminated without a cause"
+                seen.add(cause)
+                break
+    assert {2, 3} <= seen, f"expected ground and divergence among causes, saw {seen}"
+
+
+def test_summary_still_describes_a_run_that_never_succeeds():
+    """Every paper-comparison row is defined only over completed flights, so a
+    0% run printed n/a on six of seven rows and said nothing about how it
+    failed.  The diagnostic layer must describe those episodes anyway."""
+    ev = _load_evaluate()
+    records = [
+        dict(success=False, cause=1, gates=1, duration=0.68, gate_times=[0.4],
+             gate_err=[0.21], margin=0.05, vmax=10.6, amax=4.1),
+        dict(success=False, cause=2, gates=0, duration=0.31, gate_times=[],
+             gate_err=[], margin=None, vmax=9.2, amax=3.8),
+        dict(success=False, cause=3, gates=1, duration=1.22, gate_times=[0.5],
+             gate_err=[0.44], margin=0.02, vmax=17.0, amax=5.9),
+    ]
+    decode = {"p_w": 2.2, "v_w": 5.9, "early": {"p_w": 0.1, "v_w": 0.3}}
+    s = ev.summarize(records, decode, n_gates=3, laps=5)
+
+    assert s["success_rate"] == 0.0
+    assert "lap1_s" not in s, "lap times need a completed lap; they must stay absent"
+
+    d = s["diagnostics"]
+    assert d["gates_passed"]["histogram"] == {0: 1, 1: 2}
+    assert d["termination"] == {"hit a gate": 1, "hit the ground": 1, "diverged": 1}
+    assert d["duration_s"]["max"] == pytest.approx(1.22)
+    assert d["max_speed_ms_all"]["max"] == pytest.approx(17.0)
+    assert d["gate_error_m_all"]["max"] == pytest.approx(0.44)
+    assert d["min_gate_margin_m_all"] == pytest.approx(0.02)
+
+    text = ev.report("inverted_loop", s)
+    for want in ("gates passed", "ended by", "hit a gate", "flight time",
+                 f"first {ev.EARLY_STEPS} steps", "whole flight"):
+        assert want in text, want
+
+
 def test_eval_driver_stops_integrating_dead_episodes():
     """`scripts/evaluate.py` drives the batched env itself instead of going
     through embodied's driver, and the driver is what normally resets an env on

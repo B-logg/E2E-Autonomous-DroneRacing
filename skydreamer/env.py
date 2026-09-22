@@ -106,6 +106,12 @@ class EnvState(NamedTuple):
     done: jax.Array
     action_buf: jax.Array  # (ACTION_DELAY_STEPS, 4)
     mask_buf: jax.Array  # (IMAGE_DELAY_STEPS + 1, H, W)
+    # Why the episode ended, for diagnostics only -- nothing in the training
+    # loop reads it.  `done` is one bool, which is all the agent needs but
+    # leaves "it crashed" unanswerable: flying into a gate, mushing into the
+    # floor and tumbling out of control are different failures with different
+    # fixes.  0 = still flying, 1 = gate, 2 = ground, 3 = divergence.
+    term_cause: jax.Array
 
 
 def _mix(a: float, b: float, use_train: jax.Array) -> jax.Array:
@@ -201,6 +207,7 @@ def reset(key: jax.Array, cfg: EnvConfig) -> tuple[EnvState, dict]:
         # read, so index 0 is exactly D steps old.  Sizing this D would give a
         # D-1 step delay -- 22 ms instead of the paper's 33 ms.
         mask_buf=jnp.zeros((IMAGE_DELAY_STEPS + 1, cfg.image_size, cfg.image_size)),
+        term_cause=jnp.array(0, jnp.int32),
     )
     # Prime the image buffer so the first observations are consistent rather
     # than blank; the real drone likewise has valid frames before it launches.
@@ -332,6 +339,11 @@ def step(state: EnvState, action: jax.Array, cfg: EnvConfig):
     hit_ground = trk.ground_collision(s_next.p, s_next.v, euler)
     blew_up = trk.diverged(s_next.omega_b, s_next.p, s_next.v)
     terminal = hit_gate | hit_ground | blew_up
+    # Diagnostics only; checked in this order so a gate strike that also drives
+    # the drone into the floor is reported as the gate strike that caused it.
+    term_cause = jnp.where(
+        hit_gate, 1, jnp.where(hit_ground, 2, jnp.where(blew_up, 3, 0))
+    ).astype(jnp.int32)
     reward = jnp.where(terminal, 0.0, reward)  # II-C: terminal reward is zero
 
     plane = state.plane + passed.astype(jnp.int32)
@@ -361,6 +373,7 @@ def step(state: EnvState, action: jax.Array, cfg: EnvConfig):
         step_count=state.step_count + 1,
         done=terminal,
         action_buf=action_buf,
+        term_cause=term_cause,
     )
 
     # --- image delay: the policy sees a frame IMAGE_DELAY_STEPS old

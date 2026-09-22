@@ -36,6 +36,7 @@ if DV3.exists():
     sys.path.insert(0, str(DV3))
 
 GROUND, SKY = "#f2f2ef", "#ffffff"
+FLOOR, FLOOR_GRID = "#e4e4df", "#c9c9c1"
 INK, MUTED = "#1a1a1a", "#8a8a8a"
 TRUTH, DECODED = "#1a1a1a", "#2d7dd2"
 
@@ -53,7 +54,7 @@ def fly(agent, cfg, seed, laps):
         st, obs = reset(jax.random.key(seed), cfg)
         carry = agent.init_policy(1)
         target = laps * cfg.track.n_gates
-        rec = {k: [] for k in ("p", "v", "mask", "axis", "decoded", "gates", "speed")}
+        rec = {k: [] for k in ("p", "q", "v", "mask", "axis", "decoded", "gates", "speed")}
         is_first, crashed = True, False
 
         for t in range(cfg.max_steps):
@@ -69,6 +70,7 @@ def fly(agent, cfg, seed, laps):
 
             rec["mask"].append(np.asarray(unpack_mask(obs["mask"])))
             rec["p"].append(np.asarray(st.s.p))
+            rec["q"].append(np.asarray(st.s.q))
             rec["v"].append(np.asarray(st.s.v))
             rec["speed"].append(float(np.linalg.norm(np.asarray(st.s.v))))
             rec["axis"].append(np.asarray(camera_rotation(st.s.q, st.c_e) @ jnp.array([1.0, 0, 0])))
@@ -87,6 +89,97 @@ def fly(agent, cfg, seed, laps):
     out["crashed"] = crashed
     out["duration"] = len(rec["p"]) * CONTROL_DT
     return out
+
+
+CHASE_RES = 256       # px; the policy's own view is 64, this is just for looking at
+CHASE_BACK = 4.0      # m behind the drone
+CHASE_UP = 1.3        # m above it
+CHASE_PITCH = 14.0    # deg, tilted down towards the drone
+GROUND_RANGE = 45.0   # m; beyond this the floor grid is just aliasing
+
+
+def _rgb(hexstr):
+    h = hexstr.lstrip("#")
+    return np.array([int(h[i:i + 2], 16) / 255 for i in (0, 2, 4)], np.float32)
+
+
+def chase_view(p, q, track, res=CHASE_RES):
+    """Render the scene from a chase camera **with the simulator's own ray
+    caster** -- the same `render_mask` that produces the image the policy flies
+    on, just from a different pose and at a higher resolution.
+
+    Worth being precise about what this can and cannot be.  The simulated world
+    contains gates and nothing else: no ground texture, no walls, no drone
+    body.  That is not an omission, it is the modelling choice the whole paper
+    rests on -- the policy only ever sees a binary gate mask, so a gate mask is
+    all the simulator needs to produce.  There is no photoreal scene to film
+    because none exists.
+
+    So the gates here are genuine simulator output, and the drone is projected
+    in afterwards through the same camera model, which puts its marker exactly
+    where this camera would see it.
+    """
+    import jax
+    import jax.numpy as jnp
+
+    from skydreamer.dynamics import euler_to_quat, quat_to_euler
+    from skydreamer.render import camera_rotation, intrinsics, pixel_rays, render_mask
+
+    p = np.asarray(p, np.float64)
+    with jax.transfer_guard("allow"):
+        yaw = float(quat_to_euler(jnp.asarray(q))[2])
+        eye = p + np.array(
+            [-CHASE_BACK * np.cos(yaw), -CHASE_BACK * np.sin(yaw), -CHASE_UP])
+        # Body pitch down, no camera offset: c_e is the body->camera rotation
+        # and a free camera has none.
+        q_cam = euler_to_quat(
+            jnp.float32(0.0), jnp.float32(-np.deg2rad(CHASE_PITCH)), jnp.float32(yaw))
+        gates = np.asarray(render_mask(
+            jnp.asarray(eye, jnp.float32), q_cam, jnp.zeros(3), track, h=res, w=res))
+        R = np.asarray(camera_rotation(q_cam, jnp.zeros(3)))
+        rays = np.asarray(pixel_rays(res, res))
+
+    # The floor is real: `track.ground_collision` ends an episode on it, so it
+    # is part of the simulated world and belongs in a picture of that world.
+    # Intersect every pixel ray with the plane z = 0 (NED, so altitude is -z).
+    world = rays @ R.T
+    with np.errstate(divide="ignore", invalid="ignore"):
+        t = np.where(world[..., 2] > 1e-6, -eye[2] / world[..., 2], np.inf)
+    floor = np.isfinite(t) & (t > 0) & (t < GROUND_RANGE)
+    # Only floor pixels have a hit point; zero the rest so the grid arithmetic
+    # below stays finite instead of computing inf - inf on the sky.
+    hit = eye[None, None, :] + np.where(floor, t, 0.0)[..., None] * world
+
+    # A one-metre grid on the floor gives the perspective and the motion
+    # something to read against.  Widen the line with distance so it does not
+    # alias into noise near the horizon.
+    off = np.minimum(
+        np.abs(hit[..., 0] - np.round(hit[..., 0])),
+        np.abs(hit[..., 1] - np.round(hit[..., 1])),
+    )
+    grid = floor & (off < 0.02 * (1.0 + 0.35 * np.clip(t, 0, GROUND_RANGE)))
+
+    img = np.ones((res, res, 3), np.float32) * _rgb(SKY)
+    img[floor] = _rgb(FLOOR)
+    img[grid] = _rgb(FLOOR_GRID)
+    img[gates > 0.5] = _rgb(INK)
+
+    d = R.T @ (p - eye)  # world -> camera-forward (x fwd, y right, z down)
+    fx, fy, cx, cy = intrinsics(res, res)
+    uv = (cx + fx * d[1] / d[0], cy + fy * d[2] / d[0]) if d[0] > 1e-3 else None
+    return img, uv
+
+
+def _draw_chase(ax, ep, i, track):
+    img, uv = chase_view(ep["p"][i], ep["q"][i], track)
+    ax.imshow(img, interpolation="nearest")
+    if uv is not None and 0 <= uv[0] < img.shape[1] and 0 <= uv[1] < img.shape[0]:
+        ax.plot(uv[0], uv[1], "o", ms=9, color=TRUTH,
+                markeredgecolor="white", markeredgewidth=1.6, zorder=5)
+    ax.set_title("chase camera (simulator render)", color=INK, fontsize=9, pad=6)
+    ax.set_xticks([]); ax.set_yticks([])
+    for sp in ax.spines.values():
+        sp.set_color("#dddddd")
 
 
 def _gate_segments(track):
@@ -200,18 +293,22 @@ def render(ep, track, out_stem, stride, fps):
 
     frames = []
     for i in range(0, len(p), stride):
-        fig = plt.figure(figsize=(10.5, 7.4))
+        fig = plt.figure(figsize=(15.0, 7.4))
         fig.patch.set_facecolor(GROUND)
-        axm = fig.add_subplot(2, 2, 1)
-        ax3 = fig.add_subplot(2, 2, 2, projection="3d")
-        axt = fig.add_subplot(2, 2, 3)
-        axs_ = fig.add_subplot(2, 2, 4)
+        axm = fig.add_subplot(2, 3, 1)
+        axc = fig.add_subplot(2, 3, 2)
+        ax3 = fig.add_subplot(2, 3, 3, projection="3d")
+        axt = fig.add_subplot(2, 3, 4)
+        axs_ = fig.add_subplot(2, 3, 5)
+        axi = fig.add_subplot(2, 3, 6)
 
         axm.imshow(ep["mask"][i], cmap="gray_r", vmin=0, vmax=1, interpolation="nearest")
-        axm.set_title("what the policy sees", color=INK, fontsize=9, pad=6)
+        axm.set_title("what the policy sees (64x64)", color=INK, fontsize=9, pad=6)
         axm.set_xticks([]); axm.set_yticks([])
         for sp in axm.spines.values():
             sp.set_color("#dddddd")
+
+        _draw_chase(axc, ep, i, track)
 
         # third person: gates, the trail so far, and the drone with its camera axis
         _setup3d(ax3, bounds3d)
@@ -251,6 +348,19 @@ def render(ep, track, out_stem, stride, fps):
             ax.plot(h, v, "o", ms=6, color=cmap(speed[i] / vmax),
                     markeredgecolor="white", markeredgewidth=1.5, zorder=5)
 
+        axi.axis("off")
+        lines = [
+            f"t            {i * 0.011:6.2f} s",
+            f"speed        {speed[i]:6.2f} m/s",
+            f"altitude     {alt[i]:6.2f} m",
+            f"gates passed {ep['gates'][i]:6d}",
+            "",
+            f"flight ended {'in a crash' if ep['crashed'] else 'intact'}",
+            f"after        {ep['duration']:6.2f} s",
+        ]
+        axi.text(0.02, 0.97, "\n".join(lines), transform=axi.transAxes,
+                 va="top", ha="left", family="monospace", fontsize=10, color=INK)
+
         fig.suptitle(
             f"t = {i * 0.011:5.2f} s     {speed[i]:5.1f} m/s     "
             f"gates passed: {ep['gates'][i]}",
@@ -286,7 +396,12 @@ def still(ep, track, out_png):
     cmap = plt.get_cmap("viridis")
     xs, ys, alt = p[:, 0], p[:, 1], -p[:, 2]
 
-    fig, (axt, axs_) = plt.subplots(1, 2, figsize=(11, 4.6))
+    # Three panels, not two: the paper's top-down and side plots, plus one
+    # frame of the simulator's own render so the figure shows the environment
+    # and not only a plot of it.  Mid-flight, which is more informative than
+    # the moment of the crash.
+    fig, (axc, axt, axs_) = plt.subplots(1, 3, figsize=(16, 4.6))
+    _draw_chase(axc, ep, len(p) // 2, track)
     fig.patch.set_facecolor(GROUND)
     for ax, (h, v), labels, title in (
         (axt, (ys, xs), ("Y [m]", "X [m]"), "Top-down view"),

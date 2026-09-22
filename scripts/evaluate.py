@@ -106,6 +106,16 @@ def rollout(agent, cfg_env, episodes: int, laps: int, seed: int, chunk: int = 64
         return _rollout(agent, cfg_env, episodes, laps, seed, chunk)
 
 
+# Decode error over the whole flight conflates two different things: how well
+# the world model estimates state, and how far off-distribution the drone ends
+# up once it starts going wrong.  The first `EARLY_STEPS` are before anything
+# has gone wrong, so comparing the two separates them.
+EARLY_STEPS = 20
+
+# EnvState.term_cause
+CAUSES = {0: "survived", 1: "hit a gate", 2: "hit the ground", 3: "diverged"}
+
+
 def _agent_obs(obs: dict) -> dict:
     """The observation in exactly the dtypes embodied_env.py hands the agent.
 
@@ -151,6 +161,7 @@ def _rollout(agent, cfg_env, episodes: int, laps: int, seed: int, chunk: int = 6
     # Decode error is a per-timestep quantity over every still-flying drone, so
     # it is accumulated globally rather than attributed to individual episodes.
     decode_all = {"p_w": [], "v_w": []}
+    decode_early_all = {"p_w": [], "v_w": []}
     done_total = 0
     while done_total < episodes:
         b = min(chunk, episodes - done_total)
@@ -167,6 +178,7 @@ def _rollout(agent, cfg_env, episodes: int, laps: int, seed: int, chunk: int = 6
         vmax = np.zeros(b)
         amax = np.zeros(b)
         decode_err = {k: [] for k in ("p_w", "v_w")}
+        decode_early = {k: [] for k in ("p_w", "v_w")}
         prev_gates = np.zeros(b, int)
         prev_v = np.zeros((b, 3))
         is_first = np.ones(b, bool)
@@ -197,6 +209,8 @@ def _rollout(agent, cfg_env, episodes: int, laps: int, seed: int, chunk: int = 6
                     truth = np.asarray(getattr(st.s, "p" if key == "p_w" else "v"))
                     err = np.linalg.norm(np.asarray(outs[rk]) - truth, axis=-1)
                     decode_err[key].append(err[live].copy())
+                    if t < EARLY_STEPS:
+                        decode_early[key].append(err[live].copy())
 
             with jax.transfer_guard("allow"):
                 st_next, obs_next, rew, term, trunc = step_b(st, jnp.asarray(u))
@@ -255,10 +269,13 @@ def _rollout(agent, cfg_env, episodes: int, laps: int, seed: int, chunk: int = 6
             if (finished | ~alive).all():
                 break
 
+        with jax.transfer_guard("allow"):
+            causes = np.asarray(st.term_cause)
         for i in range(b):
             records.append(
                 dict(
                     success=bool(finished[i]),
+                    cause=int(causes[i]),
                     gates=int(prev_gates[i]),
                     duration=float(steps[i] * CONTROL_DT),
                     gate_times=gate_times[i],
@@ -271,19 +288,40 @@ def _rollout(agent, cfg_env, episodes: int, laps: int, seed: int, chunk: int = 6
         for k, v in decode_err.items():
             if v:
                 decode_all[k].append(np.concatenate(v))
+        for k, v in decode_early.items():
+            if v:
+                decode_early_all[k].append(np.concatenate(v))
         done_total += b
         print(f"  {done_total}/{episodes} episodes", flush=True)
     decode = {k: float(np.mean(np.concatenate(v))) for k, v in decode_all.items() if v}
+    decode["early"] = {
+        k: float(np.mean(np.concatenate(v))) for k, v in decode_early_all.items() if v
+    }
     return records, decode
 
 
 def summarize(records, decode: dict, n_gates: int, laps: int):
+    """Two layers.
+
+    The paper-comparison layer keeps the paper's definitions exactly: Table IV
+    reports lap times and speeds for flights that *completed*, so those stay
+    restricted to successful episodes and read n/a when there are none.
+
+    The diagnostic layer describes every episode, successful or not.  A run
+    that fails needs this most and had it least: the first evaluation of the
+    finished 17M checkpoint printed n/a on six of seven rows, which says
+    nothing about how it failed.  Speed, acceleration, gate error and gate
+    margin are all perfectly well defined for a flight that ends in a crash.
+    """
     ok = [r for r in records if r["success"]]
+    n = max(1, len(records))
     out = {
         "episodes": len(records),
-        "success_rate": len(ok) / max(1, len(records)),
+        "success_rate": len(ok) / n,
         "mean_gates_passed": float(np.mean([r["gates"] for r in records])),
     }
+
+    # --- paper comparison: completed flights only --------------------------
     if ok:
         lap_times = []
         for r in ok:
@@ -302,6 +340,42 @@ def summarize(records, decode: dict, n_gates: int, laps: int):
         out["min_gate_margin_m"] = float(np.min(margins)) if margins else None
         out["max_speed_ms"] = float(np.max([r["vmax"] for r in ok]))
         out["max_accel_g"] = float(np.max([r["amax"] for r in ok]))
+
+    # --- diagnostics: every episode ----------------------------------------
+    gates = np.array([r["gates"] for r in records])
+    durations = np.array([r["duration"] for r in records])
+    diag = {
+        "gates_passed": {
+            "mean": float(gates.mean()),
+            "max": int(gates.max()),
+            # How far it got, as a histogram.  A policy that always dies at the
+            # same gate is a different problem from one that dies at random.
+            "histogram": {int(g): int((gates == g).sum()) for g in np.unique(gates)},
+        },
+        "duration_s": {
+            "mean": float(durations.mean()),
+            "median": float(np.median(durations)),
+            "min": float(durations.min()),
+            "max": float(durations.max()),
+        },
+        "termination": {
+            CAUSES.get(c, f"code {c}"): int(sum(1 for r in records if r["cause"] == c))
+            for c in sorted({r["cause"] for r in records})
+        },
+    }
+    speeds = np.array([r["vmax"] for r in records])
+    accels = np.array([r["amax"] for r in records])
+    diag["max_speed_ms_all"] = {"mean": float(speeds.mean()), "max": float(speeds.max())}
+    diag["max_accel_g_all"] = {"mean": float(accels.mean()), "max": float(accels.max())}
+
+    errs = [e for r in records for e in r["gate_err"]]
+    if errs:
+        diag["gate_error_m_all"] = {"mean": float(np.mean(errs)), "max": float(np.max(errs))}
+    margins = [r["margin"] for r in records if r["margin"] is not None]
+    if margins:
+        diag["min_gate_margin_m_all"] = float(np.min(margins))
+    out["diagnostics"] = diag
+
     if decode:
         out["decode_error"] = decode
     return out
@@ -323,9 +397,46 @@ def report(name: str, s: dict) -> str:
     row("max accel [g]", s.get("max_accel_g"), p.get("accel"))
     row("mean gate error [m]", s.get("gate_error_m"), None, "{:.3f}")
     row("min gate margin [m]", s.get("min_gate_margin_m"), None, "{:.3f}")
+
+    d = s.get("diagnostics")
+    if d:
+        L.append("\n--- all episodes, successful or not ---")
+        g = d["gates_passed"]
+        L.append(f"{'gates passed':<20}mean {g['mean']:.2f}   max {g['max']}")
+        hist = "  ".join(f"{k}:{v}" for k, v in sorted(g["histogram"].items()))
+        L.append(f"{'  distribution':<20}{hist}")
+
+        t = d["duration_s"]
+        L.append(
+            f"{'flight time [s]':<20}mean {t['mean']:.2f}   median {t['median']:.2f}"
+            f"   min {t['min']:.2f}   max {t['max']:.2f}"
+        )
+        L.append(
+            f"{'ended by':<20}"
+            + "   ".join(f"{k} {v}" for k, v in d["termination"].items())
+        )
+        v = d["max_speed_ms_all"]
+        L.append(f"{'max speed [m/s]':<20}mean {v['mean']:.2f}   max {v['max']:.2f}")
+        a = d["max_accel_g_all"]
+        L.append(f"{'max accel [g]':<20}mean {a['mean']:.2f}   max {a['max']:.2f}")
+        if "gate_error_m_all" in d:
+            e = d["gate_error_m_all"]
+            L.append(f"{'gate error [m]':<20}mean {e['mean']:.3f}   max {e['max']:.3f}")
+        if "min_gate_margin_m_all" in d:
+            L.append(f"{'gate margin [m]':<20}min {d['min_gate_margin_m_all']:.3f}")
+
     if "decode_error" in s:
-        for k, v in s["decode_error"].items():
-            L.append(f"{'decode err ' + k:<20}{v:.3f}")
+        dec = s["decode_error"]
+        early = dec.get("early", {})
+        L.append("\n--- world model: decoded state vs ground truth [m, m/s] ---")
+        # Split the window deliberately.  A model that is accurate early and
+        # wrong later is estimating fine and being flown somewhere it has never
+        # been; one that is wrong from the first step has a broken input.
+        for k in ("p_w", "v_w"):
+            if k not in dec:
+                continue
+            e = f"   first {EARLY_STEPS} steps {early[k]:.3f}" if k in early else ""
+            L.append(f"{'decode err ' + k:<20}whole flight {dec[k]:.3f}{e}")
     return "\n".join(L)
 
 
