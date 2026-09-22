@@ -1,5 +1,5 @@
 diff --git a/dreamerv3/agent.py b/dreamerv3/agent.py
-index 0cada34..3599b01 100644
+index 0cada34..dd678ca 100644
 --- a/dreamerv3/agent.py
 +++ b/dreamerv3/agent.py
 @@ -36,8 +36,31 @@ class Agent(embodied.jax.Agent):
@@ -58,7 +58,7 @@ index 0cada34..3599b01 100644
      (enc_carry, dyn_carry, dec_carry, prevact) = carry
      kw = dict(training=False, single=True)
      reset = obs['is_first']
-@@ -123,11 +160,28 @@ class Agent(embodied.jax.Agent):
+@@ -123,11 +160,39 @@ class Agent(embodied.jax.Agent):
      if dec_carry:
        dec_carry, dec_entry, recons = self.dec(dec_carry, feat, reset, **kw)
      policy = self.pol(self.feat2tensor(feat), bdims=1)
@@ -83,12 +83,23 @@ index 0cada34..3599b01 100644
 +      # extrinsics and dynamic parameters currently are.  Off by default --
 +      # it costs a decoder pass per step and the training loop never needs it.
 +      _, _, policy_recons = self.dec({}, feat, reset, **kw)
++      # A symlog_mse head is `MSE(pred, symlog)`: it trains `pred` against
++      # symlog(target), so the network's output lives in symlog space -- and
++      # `MSE.pred()` hands that back untouched, because a loss never needs the
++      # inverse.  Anything reading these as a state estimate does, or it
++      # compares log-compressed numbers against metres: a drone 3 m out decodes
++      # as 1.39, which looks like a 1.6 m error that is entirely the missing
++      # inverse.  Hand out metres.
++      symlog = dict(self.config.dec[self.config.dec.typ]).get('symlog', False)
 +      for key, dist in policy_recons.items():
-+        out[f'recon_{key}'] = dist.pred()
++        pred = dist.pred()
++        if symlog:
++          pred = jnp.sign(pred) * jnp.expm1(jnp.abs(pred))
++        out[f'recon_{key}'] = pred
      carry = (enc_carry, dyn_carry, dec_carry, act)
      if self.config.replay_context:
        out.update(elements.tree.flatdict(dict(
-@@ -154,6 +208,7 @@ class Agent(embodied.jax.Agent):
+@@ -154,6 +219,7 @@ class Agent(embodied.jax.Agent):
      return carry, outs, metrics
  
    def loss(self, carry, obs, prevact, training):
@@ -96,7 +107,7 @@ index 0cada34..3599b01 100644
      enc_carry, dyn_carry, dec_carry = carry
      reset = obs['is_first']
      B, T = reset.shape
-@@ -389,6 +444,7 @@ def imag_loss(
+@@ -389,6 +455,7 @@ def imag_loss(
      horizon=333,
      lam=0.95,
      actent=3e-4,
@@ -104,7 +115,7 @@ index 0cada34..3599b01 100644
      slowreg=1.0,
  ):
    losses = {}
-@@ -412,6 +468,24 @@ def imag_loss(
+@@ -412,6 +479,24 @@ def imag_loss(
    ents = {k: v.entropy()[:, :-1] for k, v in policy.items()}
    policy_loss = sg(weight[:, :-1]) * -(
        logpi * sg(adv_normed) + actent * sum(ents.values()))

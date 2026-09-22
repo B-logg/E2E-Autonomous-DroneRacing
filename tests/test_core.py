@@ -436,6 +436,45 @@ def test_eval_feeds_the_agent_the_mask_training_fed_it():
     assert not np.array_equal(corrupted, raw)
 
 
+def test_symlog_head_predictions_are_not_in_the_original_units():
+    """The trap that made the decoded state look ten times worse than it is.
+
+    `symlog_mse` builds `MSE(pred, symlog)`: the loss squashes the *target*, so
+    the network's output lives in symlog space.  `MSE.pred()` returns it
+    untouched -- correct for a loss, which never needs the inverse, and wrong
+    for anything reading it as a state estimate.  A drone 3 m out decodes as
+    1.39, which scores as a 1.6 m error that is purely the missing symexp.
+
+    Measured on the finished 17M checkpoint, inverting it moved the reported
+    position error from 2.219 m to 0.249 m.  Pinned here because it is a
+    property of vendored DreamerV3, so an upgrade could silently change it."""
+    pytest.importorskip("embodied")
+    from embodied.jax import outs
+    from embodied.jax.nets import symlog
+
+    truth = 3.0
+    squashed = float(symlog(jnp.array(truth)))
+    assert squashed == pytest.approx(np.log(4.0), abs=1e-6)
+
+    head = outs.MSE(jnp.array([squashed]), symlog)
+    # A perfect prediction costs nothing ...
+    assert float(head.loss(jnp.array([truth]))[0]) == pytest.approx(0.0, abs=1e-6)
+    # ... and yet pred() is not the truth; it is still log-compressed.
+    assert float(head.pred()[0]) == pytest.approx(squashed, abs=1e-6)
+    assert abs(float(head.pred()[0]) - truth) > 1.5
+
+    # symexp is the inverse the reader has to apply.
+    p = head.pred()
+    recovered = float((jnp.sign(p) * jnp.expm1(jnp.abs(p)))[0])
+    assert recovered == pytest.approx(truth, abs=1e-5)
+
+
+def test_patch_inverts_symlog_before_exposing_decoded_state():
+    patch = (pathlib.Path(__file__).resolve().parents[1]
+             / "patches" / "informed_dreamer.patch").read_text()
+    assert "expm1" in patch, "decoded state is exposed without undoing symlog"
+
+
 def test_chase_view_renders_the_simulated_world():
     """The third-person panel used to be a matplotlib line drawing of recorded
     numbers.  This renders the scene with the simulator's own ray caster --
