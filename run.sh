@@ -7,6 +7,7 @@
 #   ./run.sh --resume              continue the newest run after an interruption
 #   ./run.sh --setup-only ~10 min  install everything, train nothing
 #   ./run.sh --eval-only  ~10 min  re-evaluate the newest run
+#   ./run.sh --video      ~5 min   render the newest run flying (gif + figures)
 #
 # Nothing is needed on the server beyond an NVIDIA GPU, a CUDA driver, git and
 # curl. Python is installed by uv; no root, no conda, no system packages.
@@ -31,12 +32,20 @@ for arg in "$@"; do
     --resume)     MODE="resume" ;;
     --setup-only) MODE="setup" ;;
     --eval-only)  MODE="eval" ;;
+    --video)      MODE="video" ;;
     --big)        PRESET="big" ;;
     *)            EXTRA+=("${arg}") ;;
   esac
 done
 
 log() { printf '\n\033[1;36m==> %s\033[0m\n' "$*"; }
+# An aborted run leaves an empty logdir behind, and it sorts newest -- so pick
+# the newest one that actually has a config.yaml in it.
+latest_run() {
+  ls -td "${LOGROOT}"/*/ 2>/dev/null | while read -r d; do
+    [ -f "${d}config.yaml" ] && { printf '%s' "${d%/}"; return; }
+  done
+}
 die() { printf '\n\033[1;31mERROR: %s\033[0m\n' "$*" >&2; exit 1; }
 
 # --------------------------------------------------------------------------
@@ -230,6 +239,18 @@ if [ "${MODE}" = "setup" ]; then
 fi
 
 # --------------------------------------------------------------------------
+if [ "${MODE}" = "video" ]; then
+  RUN_DIR="$(latest_run)"
+  [ -n "${RUN_DIR}" ] || die "no finished run under ${LOGROOT}"
+  log "Rendering ${RUN_DIR}"
+  # matplotlib is only needed for this mode, so it is not in the base install
+  "${PY}" -c "import matplotlib, PIL" 2>/dev/null || "${PIP[@]}" matplotlib pillow
+  "${PY}" "${ROOT}/scripts/visualize.py" --logdir "${RUN_DIR}" \
+      "${EXTRA[@]+"${EXTRA[@]}"}"
+  exit 0
+fi
+
+# --------------------------------------------------------------------------
 if [ "${MODE}" = "eval" ]; then
   RUN_DIR="$(ls -td "${LOGROOT}"/*/ 2>/dev/null | head -1 || true)"
   [ -n "${RUN_DIR}" ] || die "no runs under ${LOGROOT}"
@@ -262,9 +283,8 @@ fi
 #   phase 3  13M -> 17M  entropy 3e-4 -> 1e-5, lr 4e-5 -> 2e-6
 # --------------------------------------------------------------------------
 if [ "${MODE}" = "resume" ]; then
-  RUN_DIR="$(ls -td "${LOGROOT}"/*/ 2>/dev/null | head -1 || true)"
+  RUN_DIR="$(latest_run)"
   [ -n "${RUN_DIR}" ] || die "no run to resume under ${LOGROOT}"
-  RUN_DIR="${RUN_DIR%/}"
   log "Resuming ${RUN_DIR}"
   echo "DreamerV3 picks up from the checkpoint in this logdir; phases re-run"
   echo "cheaply because run.steps is a cumulative ceiling."

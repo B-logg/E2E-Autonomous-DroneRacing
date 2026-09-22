@@ -102,6 +102,7 @@ Other modes:
 | `./run.sh --setup-only` | install only, train nothing |
 | `./run.sh --eval-only` | re-score the most recent run |
 | `./run.sh --big` | the 35M-step big-track preset (needs gate coordinates first) |
+| `./run.sh --video` | render the newest run flying: GIF + paper-style figures |
 | `./run.sh --seed 1` | any extra flag is forwarded to `scripts/train.py` |
 
 Override paths with `SKYDREAMER_LOGDIR=/data/logs ./run.sh`.
@@ -235,6 +236,26 @@ min gate margin [m] n/a
 decode err p_w      5.551
 decode err v_w      3.059
 ```
+
+### Seeing it fly
+
+```bash
+./run.sh --video                                  # 3 episodes, 2 laps each
+./run.sh --video --episodes 5 --laps 3 --stride 2 # longer, smoother
+```
+
+Writes to `logdir/<run>/video/`:
+
+- `flight_<i>.gif` — four panels: the segmentation mask the policy is actually
+  given (delays and augmentation included), a third-person 3D view of the gates
+  and the trail, and top-down and side views, all coloured by speed
+- `figure_<i>.png` — a still in the style of the paper's Figures 4 and 6:
+  ground truth against the world model's decoded position, with the camera's
+  principal axis as arrows
+
+The arrows are worth looking at. There is no perception reward, so nothing
+tells the drone to look at the gates; if the arrows point at them anyway, that
+is the emergent behaviour the paper reports.
 
 **Watch `decode err p_w` first.** It is the distance between the world model's
 decoded position and ground truth. That is the paper's central claim — the
