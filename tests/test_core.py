@@ -384,3 +384,32 @@ def test_divergence_threshold_leaves_real_maneuvers_alone():
     assert bool(T.diverged(jnp.array([60.0, 0.0, 0.0]), jnp.zeros(3), jnp.zeros(3)))
     nan = jnp.array([jnp.nan, 0.0, 0.0])
     assert bool(T.diverged(nan, jnp.zeros(3), jnp.zeros(3)))
+
+
+def test_big_track_is_an_unseen_layout():
+    """The big track exists to test the paper's unproven claim that the flight
+    plan "potentially enables generalization to arbitrary tracks".  For that to
+    mean anything it has to actually be out of distribution relative to the
+    training track, while keeping the gates themselves identical so a failure
+    cannot be blamed on a changed mask."""
+    small, big = T.inverted_loop(), T.big_track()
+
+    assert float(big.inner[0]) == float(small.inner[0])
+    assert float(big.outer[0]) == float(small.outer[0])
+
+    small_h = {round(float(np.degrees(y))) % 360 for y in small.yaw}
+    big_h = {round(float(np.degrees(y))) % 360 for y in big.yaw}
+    assert len(big_h) > 3 * len(small_h), (small_h, big_h)
+
+    span = lambda t: float(np.ptp(np.asarray(t.pos)[:, 0]))
+    assert span(big) > 3 * span(small), (span(small), span(big))
+    assert int(np.asarray(big.visible).sum()) >= 8
+
+
+def test_big_track_gates_are_reachable_in_sequence():
+    """Consecutive gates must not be so far apart that the progress reward
+    dwarfs everything else, nor coincident."""
+    pos = np.asarray(T.big_track().pos)
+    gaps = np.linalg.norm(np.diff(np.vstack([pos, pos[:1]]), axis=0), axis=-1)
+    assert gaps.min() > 1.0, gaps.min()
+    assert gaps.max() < 8.0, gaps.max()

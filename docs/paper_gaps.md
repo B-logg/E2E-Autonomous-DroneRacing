@@ -141,8 +141,17 @@ is to ask the authors.
 etc.) exactly, since those depend on the precise track. Success rate, speeds,
 accelerations and decoded-state accuracy should be comparable.
 
-The "big track" (Figure 9) is still not reconstructed — ~9 gates, and its
-figure is not dimensioned.
+The **big track** (Figure 9) is *not* reconstructed, and `track.big_track()`
+does not pretend to be one. That figure is a 3D render on an undimensioned
+slab, so there is nothing to measure. What it is: an approximation of the
+layout — an elongated oval about 23 m long, nine gates lying nearly
+antiparallel along two straights, a vertical loop at each end — following the
+caption's maneuver order. Its purpose is an **out-of-distribution test**, not a
+reproduction: the paper claims the flight plan "potentially enables
+generalization to arbitrary tracks" and never demonstrates it, so
+`./run.sh --video --track big` flies a small-track policy on it zero-shot.
+Gate size is deliberately unchanged from training so that only the layout is
+out of distribution.
 
 ### B2. Invisible-gate placement — 🟡 (was 🔴; the loop one is now pinned)
 The paper says "additional invisible gates are added to enforce the correct

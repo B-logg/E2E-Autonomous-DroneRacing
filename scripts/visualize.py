@@ -342,6 +342,10 @@ def main() -> int:
     ap.add_argument("--stride", type=int, default=3, help="render every Nth sim step")
     ap.add_argument("--fps", type=int, default=30)
     ap.add_argument("--out", type=pathlib.Path, default=None)
+    ap.add_argument(
+        "--track", default=None,
+        help="fly a track other than the one trained on, e.g. --track big "
+             "for a zero-shot test of the paper's flight-plan generalisation claim")
     args = ap.parse_args()
 
     logdir = args.logdir.expanduser()
@@ -353,7 +357,11 @@ def main() -> int:
     import ruamel.yaml as yaml
 
     task = yaml.YAML(typ="safe").load((logdir / "config.yaml").read_text())["task"]
-    track_name = task.split("_", 1)[1]
+    track_name = args.track or task.split("_", 1)[1]
+    if args.track:
+        out = args.out or (logdir / f"video_{args.track}")
+        out.mkdir(parents=True, exist_ok=True)
+        print(f"zero-shot: policy trained on {task.split('_', 1)[1]}, flying {track_name}")
 
     from evaluate import build_agent
 

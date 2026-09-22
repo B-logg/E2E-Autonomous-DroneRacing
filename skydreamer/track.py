@@ -259,6 +259,68 @@ LADDER_INVERTED_LOOP = [
 ]
 
 
+# --------------------------------------------------------------------------
+# Big track -- an out-of-distribution test, NOT a reconstruction
+# --------------------------------------------------------------------------
+#
+# [OURS] throughout.  Figure 9 is a 3D render on an undimensioned slab, so
+# unlike Figures 4 and 6 there is nothing to measure.  What the paper does give
+# is the sequence of maneuvers, and this track follows that prose:
+#
+#   "the flight begins in front of the top-left gate.  After the first gate,
+#    the trajectory continues with a slight left turn, two subsequent gates, a
+#    right turn, and a ladder maneuver in which the drone passes through the
+#    lower gate, performs a full 360 degree left turn, and flies back over it.
+#    From there, SkyDreamer extends the right turn, executing a steep dive into
+#    the next gate, and continues through several more gates before performing
+#    a tight braking maneuver to initiate a sharp right turn.  After the
+#    following gate, the track concludes with a split-S maneuver over the first
+#    gate."
+#
+# Gate size is deliberately left at the training value.  This is a test of
+# whether the flight plan generalises to an unseen *layout*; changing the gates
+# too would also change what the mask looks like, and a failure could no longer
+# be attributed to either one.
+#
+# A policy trained on the 3-gate inverted loop has never seen headings other
+# than +-Y, nor gate separations this large, so expect it to struggle.  That is
+# the point: the paper claims the flight plan "potentially enables
+# generalization to arbitrary tracks" and never demonstrates it.
+
+# Read off the render rather than the caption: an elongated oval, two long
+# straights carrying the 20 m/s stretches, gates along each straight sitting
+# nearly antiparallel to one another, and a vertical loop at each end -- the
+# ladder at one, a split-S at the other.  The caption's maneuver order is
+# preserved; what changed is the geometry, which the first attempt got wrong by
+# scattering the gates instead of lining them up along the straights.
+BIG_TRACK = [
+    # --- lower straight, flown +X: three gates in a row, the fast stretch ----
+    (-8.0, -4.0, GATE_Z, 0.0),
+    (-2.0, -4.0, GATE_Z, 0.0),
+    (4.0, -4.0, GATE_Z, 0.0),
+    # --- right-hand turn, and the "steep dive into the next gate" ------------
+    (9.5, -2.0, GATE_Z + 0.4, 50.0),
+    (10.5, 1.5, GATE_Z - 2.4, 120.0, False),   # over the top of the turn
+    (8.5, 4.0, GATE_Z, 165.0),
+    # --- upper straight, flown -X: three more gates --------------------------
+    (3.0, 4.0, GATE_Z, 180.0),
+    (-3.0, 4.0, GATE_Z, 180.0),
+    (-8.0, 4.0, GATE_Z, 180.0),
+    # --- left-hand end: the ladder -- through the low gate, a full 360, and
+    #     back over it -- then rejoin the lower straight ----------------------
+    (-11.0, 1.5, GATE_Z + 0.4, 235.0),
+    (-12.5, -0.5, GATE_Z - 2.2, 300.0, False),
+    (-10.0, 0.5, GATE_Z - 1.0, 160.0, False),
+    (-11.5, -2.5, GATE_Z, 330.0, False),
+]
+
+def big_track() -> Track:
+    """Approximates the paper's Figure 9 layout from its prose, for zero-shot
+    testing of a policy trained on the small track.  Same gates as training --
+    only the layout is out of distribution."""
+    return make_track(BIG_TRACK, inner=1.5, outer=2.7)
+
+
 def inverted_loop() -> Track:
     """Figure 6 / Table IV "Loop (orange)".  Orange gates: inner 1.5 m, outer
     2.7 m [TEXT]."""

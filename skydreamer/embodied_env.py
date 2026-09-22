@@ -46,6 +46,9 @@ from .params import NOMINAL
 TRACKS = {
     "inverted_loop": T.inverted_loop,
     "ladder_inverted_loop": T.ladder_inverted_loop,
+    # Approximation of the paper's Figure 9, for zero-shot testing only -- it is
+    # not a reconstruction (that figure has no dimensioned axes to measure).
+    "big": T.big_track,
 }
 
 # Per-track tunnel size.  Table III's 0.8 m applies unless the paper overrides
@@ -53,6 +56,7 @@ TRACKS = {
 TRACK_T_G = {
     "inverted_loop": None,  # Table III default, 0.8 m
     "ladder_inverted_loop": 0.3,
+    "big": 0.5,             # III-D uses t_g = 0.5 for the big track
 }
 
 
@@ -79,11 +83,6 @@ class SkyDreamer:
     def __init__(self, task="inverted_loop", size=64, max_steps=2000, seed=0):
         if task.startswith("skydreamer_"):  # tolerate an unsplit task name
             task = task.split("_", 1)[1]
-        if task == "big":
-            raise NotImplementedError(
-                "the big track (paper Figure 9) has no published gate coordinates "
-                "and is not reconstructed; see docs/paper_gaps.md B1"
-            )
         if task not in TRACKS:
             raise ValueError(f"unknown track {task!r}; have {sorted(TRACKS)}")
 
