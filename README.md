@@ -103,6 +103,7 @@ Other modes:
 | `./run.sh --eval-only` | re-score the most recent run |
 | `./run.sh --big` | the 35M-step big-track preset (needs gate coordinates first) |
 | `./run.sh --video` | render the newest run flying: GIF + paper-style figures |
+| `./run.sh --video --track big` | fly it zero-shot on the Figure 9 track it never trained on |
 | `./run.sh --seed 1` | any extra flag is forwarded to `scripts/train.py` |
 
 Override paths with `SKYDREAMER_LOGDIR=/data/logs ./run.sh`.

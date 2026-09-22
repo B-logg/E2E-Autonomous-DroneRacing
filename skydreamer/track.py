@@ -226,6 +226,7 @@ def flight_plan(track: Track, i: jax.Array) -> jax.Array:
 GATE_1_X = 3.0       # [FIG] clipped block; centre is +2.8..+3.0
 GATE_2_X = -2.0      # [FIG] full block, span 2.71 m, centre -2.01
 GATE_Z = -1.35       # [FIG] a 2.7 m outer gate standing on the floor
+BIG_Z = -1.25        # [FIG 9] gate blocks span altitude 0.17-2.34 m
 LOOP_GAP = 2.7       # [TEXT] "the separation between the actual gate and the
                      # virtual gate of 2.7 m"; [FIG] confirms the loop's top
                      # crossing at altitude 4.0 m = 1.35 + 2.7
@@ -287,46 +288,48 @@ LADDER_INVERTED_LOOP = [
 # the point: the paper claims the flight plan "potentially enables
 # generalization to arbitrary tracks" and never demonstrates it.
 
-# Read off the render, not the caption alone.  Two things the caption does not
-# tell you and the first two attempts got wrong:
+# MEASURED, like the small tracks.  The arXiv HTML drops Figure 9's plots --
+# they are vector, not raster -- but the PDF has them on page 14 with metric
+# axes, so the gates can be read off exactly as for Figures 4 and 6.
 #
-#   * most of the gates sit in ONE long row, all facing the same way, and the
-#     20 m/s stretch is the drone slaloming straight down that row -- not two
-#     straights of antiparallel gates;
-#   * the return leg swings wide *outside* the row, and the ladder happens at
-#     one end around a gate that is rotated relative to the rest.  One further
-#     gate stands nearly perpendicular to the row (it appears edge-on in the
-#     render, as a thin sliver).
+# Validation, the same kind as before: the measured gate blocks come out
+# 2.10 m wide and span altitude 0.17-2.34 m, against the MAVLab gate's stated
+# outer size of 2.1 m.  Two independent confirmations that the calibration is
+# right.
 #
-# The caption then supplies the order: "a slight left turn, two subsequent
-# gates, a right turn, and a ladder maneuver ... a full 360 degree left turn,
-# and flies back over it ... a steep dive into the next gate ... several more
-# gates ... a tight braking maneuver to initiate a sharp right turn.  After the
-# following gate, the track concludes with a split-S maneuver over the first
-# gate."
+# What the measurement says: a large oval, 8 gates, roughly 23 x 13 m.
+#     top straight    X = +6.0, gates at Y = -3.4 and +2.8
+#     bottom straight X = -6.0, gates at Y = -3.4 and +2.8
+#     left end        one gate at (X +3.7, Y -9.5) -- the start
+#     right end       two gates tilted ~45 deg at Y ~ +8.5, where the ladder is
+#     middle          one gate at (X 0, Y -0.3) turned 90 deg to the rest
+#
+# Earlier attempts in this file's history guessed at the layout from the
+# caption and from the 3D render and got it wrong twice -- once as a scattered
+# polygon, once as a slalom down a single row.  Measuring settled it.
 BIG_TRACK = [
-    # --- the row: six parallel gates, flown +X.  This is the fast stretch ----
-    (-9.0, 0.0, GATE_Z, 0.0),
-    (-5.0, 0.0, GATE_Z, 0.0),
-    (-1.0, 0.0, GATE_Z, 0.0),
-    (3.0, 0.0, GATE_Z, 0.0),
-    (7.0, 0.5, GATE_Z, 10.0),
-    # --- right end: "a right turn, and a ladder maneuver ... through the lower
-    #     gate, a full 360 degree left turn, and flies back over it" ----------
-    (11.0, 2.5, GATE_Z + 0.4, 65.0),
-    (12.0, 5.5, GATE_Z - 2.2, 150.0, False),   # up and over
-    (8.5, 5.0, GATE_Z - 1.0, 240.0, False),    # back across
-    # --- "a steep dive into the next gate" ----------------------------------
-    (9.0, -2.5, GATE_Z - 2.4, 215.0, False),
-    (6.0, -5.0, GATE_Z, 200.0),
-    # --- the wide return outside the row, flown -X --------------------------
-    (0.0, -6.5, GATE_Z, 190.0),
-    # --- the gate standing across the row, seen edge-on in the render -------
-    (-5.0, -5.5, GATE_Z, 250.0),
-    # --- "a tight braking maneuver to initiate a sharp right turn" ----------
-    (-10.0, -3.0, GATE_Z, 300.0, False),
-    # --- "concludes with a split-S maneuver over the first gate" -------------
-    (-9.0, 0.0, GATE_Z - LOOP_GAP, 180.0, False),
+    # 1. start gate, at the left end, flown +Y ("the top-left gate")
+    (3.7, -9.5, BIG_Z, 90.0),
+    # 2-3. "a slight left turn, two subsequent gates" -- the top straight
+    (6.0, -3.4, BIG_Z, 90.0),
+    (6.0, 2.8, BIG_Z, 90.0),
+    # 4-5. "a right turn, and a ladder maneuver in which the drone passes
+    #      through the lower gate, performs a full 360 degree left turn, and
+    #      flies back over it" -- the two tilted gates at the right end
+    (2.6, 8.5, BIG_Z, 135.0),
+    (5.5, 11.5, BIG_Z - 2.2, 250.0, False),     # up and around
+    (0.5, 10.5, BIG_Z - 1.0, 120.0, False),     # back over it
+    # 6. "a steep dive into the next gate"
+    (-3.0, 8.9, BIG_Z, 215.0),
+    # 7-8. "continues through several more gates" -- the bottom straight, -Y
+    (-6.0, 2.8, BIG_Z, 270.0),
+    (-6.0, -3.4, BIG_Z, 270.0),
+    # 9. "a tight braking maneuver to initiate a sharp right turn.  After the
+    #    following gate" -- the middle gate, turned 90 deg to the rest
+    (-3.0, -7.5, BIG_Z, 330.0, False),
+    (0.0, -0.3, BIG_Z, 0.0),
+    # 10. "the track concludes with a split-S maneuver over the first gate"
+    (3.7, -9.5, BIG_Z - LOOP_GAP, 270.0, False),
 ]
 
 def big_track() -> Track:

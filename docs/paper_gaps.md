@@ -141,41 +141,33 @@ is to ask the authors.
 etc.) exactly, since those depend on the precise track. Success rate, speeds,
 accelerations and decoded-state accuracy should be comparable.
 
-The **big track** (Figure 9) is *not* reconstructed, and `track.big_track()`
-does not pretend to be one. That figure is a 3D render on an undimensioned
-slab, so there is nothing to measure. What it is: an approximation of the
-layout — nine gates over about 22 x 12 m, five of them in a single row
-facing the same way (the render's defining feature — the 20 m/s stretch is the
-drone slaloming down that row), the return leg swinging wide outside it, a
-ladder at one end around a rotated gate, and one gate standing across the row.
-The caption supplies the maneuver order.
+The **big track** (Figure 9) *is* measured, like the small ones — but only
+from the PDF. The arXiv HTML drops that figure's top-down and side panels
+because they are vector rather than raster; page 14 of the PDF has them, with
+metric axes.
 
-Two earlier attempts got this wrong and are worth recording: the first used
-only the caption and produced a scattered polygon; the second assumed an oval
-and split the gates across two straights as antiparallel pairs. Reading the
-render itself was what fixed it. Its purpose is an **out-of-distribution test**, not a
-reproduction: the paper claims the flight plan "potentially enables
-generalization to arbitrary tracks" and never demonstrates it, so
-`./run.sh --video --track big` flies a small-track policy on it zero-shot.
-Gate size is deliberately unchanged from training so that only the layout is
-out of distribution.
+Validation is the same kind as for Figures 4 and 6: the measured gate blocks
+come out **2.10 m** wide and span altitude **0.17–2.34 m**, against the MAVLab
+gate's independently stated outer size of **2.1 m**.
 
-### B2. Invisible-gate placement — 🟡 (was 🔴; the loop one is now pinned)
-The paper says "additional invisible gates are added to enforce the correct
-flight maneuvers" without saying where or how many. These are what actually
-*define* the inverted loop and the ladder.
+| Quantity | Value |
+|---|---|
+| top straight | X = +6.0, gates at Y = −3.4 and +2.8 |
+| bottom straight | X = −6.0, gates at Y = −3.4 and +2.8 |
+| start gate (left end) | X = +3.7, Y = −9.5 |
+| middle gate, turned 90° to the rest | X = 0, Y = −0.3 |
+| right end | two gates tilted ~45°, Y ≈ +8.5 |
+| gate centre altitude | 1.25 m |
+| extent | 21 × 12 m |
 
-The **inverted loop's** virtual gate is now pinned, from text and figure
-agreeing: "the separation between the actual gate and the virtual gate of
-**2.7 m**", and the side view of Figure 6 shows the trajectory crossing the
-gate plane at altitude 1.35 m (the gate) and again at **4.05 m** — exactly
-2.7 m higher. So the virtual gate sits **directly above the real gate, 2.7 m
-up**, and is flown inverted. A half loop of diameter 2.7 m has radius 1.35 m,
-matching the text's "almost perfect circle with a radius of roughly 1.5 m".
+Gate *size* is deliberately left at the training value rather than the paper's
+MAVLab 1.5/2.1, so that only the layout is out of distribution — otherwise the
+mask would change too and a failure could not be attributed to either.
 
-The **ladder's** virtual gates are still ours. The text constrains them only
-as "a full 360° left turn, and flies back over it" with the drone "remaining
-mostly within 1 m of the gate". Expect to iterate here.
+Its purpose is an **out-of-distribution test**: the paper claims the flight
+plan "potentially enables generalization to arbitrary tracks" and never
+demonstrates it. `./run.sh --video --track big` and
+`scripts/evaluate.py --track big` fly a small-track policy on it zero-shot.
 
 ### B2b. No termination for a diverging simulation — 🔴 (we had to add one)
 The moment equation includes gyroscopic coupling (`J_x q r` and friends) that
