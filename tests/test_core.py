@@ -405,6 +405,14 @@ def test_big_track_is_an_unseen_layout():
     assert span(big) > 3 * span(small), (span(small), span(big))
     assert int(np.asarray(big.visible).sum()) >= 8
 
+    # Figure 9's defining feature: most gates sit in one row facing the same
+    # way, and the 20 m/s stretch is the drone slaloming down it.  Two earlier
+    # attempts missed this -- one scattered the gates, one split them across
+    # two straights as antiparallel pairs.
+    deg = np.degrees(np.asarray(big.yaw))[np.asarray(big.visible)]
+    in_row = int((np.abs((deg + 180) % 360 - 180) < 15).sum())
+    assert in_row >= 5, f"only {in_row} gates form the row"
+
 
 def test_big_track_gates_are_reachable_in_sequence():
     """Consecutive gates must not be so far apart that the progress reward

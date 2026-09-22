@@ -144,9 +144,16 @@ accelerations and decoded-state accuracy should be comparable.
 The **big track** (Figure 9) is *not* reconstructed, and `track.big_track()`
 does not pretend to be one. That figure is a 3D render on an undimensioned
 slab, so there is nothing to measure. What it is: an approximation of the
-layout — an elongated oval about 23 m long, nine gates lying nearly
-antiparallel along two straights, a vertical loop at each end — following the
-caption's maneuver order. Its purpose is an **out-of-distribution test**, not a
+layout — nine gates over about 22 x 12 m, five of them in a single row
+facing the same way (the render's defining feature — the 20 m/s stretch is the
+drone slaloming down that row), the return leg swinging wide outside it, a
+ladder at one end around a rotated gate, and one gate standing across the row.
+The caption supplies the maneuver order.
+
+Two earlier attempts got this wrong and are worth recording: the first used
+only the caption and produced a scattered polygon; the second assumed an oval
+and split the gates across two straights as antiparallel pairs. Reading the
+render itself was what fixed it. Its purpose is an **out-of-distribution test**, not a
 reproduction: the paper claims the flight plan "potentially enables
 generalization to arbitrary tracks" and never demonstrates it, so
 `./run.sh --video --track big` flies a small-track policy on it zero-shot.

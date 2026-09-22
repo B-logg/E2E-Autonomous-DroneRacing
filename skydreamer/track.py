@@ -287,31 +287,46 @@ LADDER_INVERTED_LOOP = [
 # the point: the paper claims the flight plan "potentially enables
 # generalization to arbitrary tracks" and never demonstrates it.
 
-# Read off the render rather than the caption: an elongated oval, two long
-# straights carrying the 20 m/s stretches, gates along each straight sitting
-# nearly antiparallel to one another, and a vertical loop at each end -- the
-# ladder at one, a split-S at the other.  The caption's maneuver order is
-# preserved; what changed is the geometry, which the first attempt got wrong by
-# scattering the gates instead of lining them up along the straights.
+# Read off the render, not the caption alone.  Two things the caption does not
+# tell you and the first two attempts got wrong:
+#
+#   * most of the gates sit in ONE long row, all facing the same way, and the
+#     20 m/s stretch is the drone slaloming straight down that row -- not two
+#     straights of antiparallel gates;
+#   * the return leg swings wide *outside* the row, and the ladder happens at
+#     one end around a gate that is rotated relative to the rest.  One further
+#     gate stands nearly perpendicular to the row (it appears edge-on in the
+#     render, as a thin sliver).
+#
+# The caption then supplies the order: "a slight left turn, two subsequent
+# gates, a right turn, and a ladder maneuver ... a full 360 degree left turn,
+# and flies back over it ... a steep dive into the next gate ... several more
+# gates ... a tight braking maneuver to initiate a sharp right turn.  After the
+# following gate, the track concludes with a split-S maneuver over the first
+# gate."
 BIG_TRACK = [
-    # --- lower straight, flown +X: three gates in a row, the fast stretch ----
-    (-8.0, -4.0, GATE_Z, 0.0),
-    (-2.0, -4.0, GATE_Z, 0.0),
-    (4.0, -4.0, GATE_Z, 0.0),
-    # --- right-hand turn, and the "steep dive into the next gate" ------------
-    (9.5, -2.0, GATE_Z + 0.4, 50.0),
-    (10.5, 1.5, GATE_Z - 2.4, 120.0, False),   # over the top of the turn
-    (8.5, 4.0, GATE_Z, 165.0),
-    # --- upper straight, flown -X: three more gates --------------------------
-    (3.0, 4.0, GATE_Z, 180.0),
-    (-3.0, 4.0, GATE_Z, 180.0),
-    (-8.0, 4.0, GATE_Z, 180.0),
-    # --- left-hand end: the ladder -- through the low gate, a full 360, and
-    #     back over it -- then rejoin the lower straight ----------------------
-    (-11.0, 1.5, GATE_Z + 0.4, 235.0),
-    (-12.5, -0.5, GATE_Z - 2.2, 300.0, False),
-    (-10.0, 0.5, GATE_Z - 1.0, 160.0, False),
-    (-11.5, -2.5, GATE_Z, 330.0, False),
+    # --- the row: six parallel gates, flown +X.  This is the fast stretch ----
+    (-9.0, 0.0, GATE_Z, 0.0),
+    (-5.0, 0.0, GATE_Z, 0.0),
+    (-1.0, 0.0, GATE_Z, 0.0),
+    (3.0, 0.0, GATE_Z, 0.0),
+    (7.0, 0.5, GATE_Z, 10.0),
+    # --- right end: "a right turn, and a ladder maneuver ... through the lower
+    #     gate, a full 360 degree left turn, and flies back over it" ----------
+    (11.0, 2.5, GATE_Z + 0.4, 65.0),
+    (12.0, 5.5, GATE_Z - 2.2, 150.0, False),   # up and over
+    (8.5, 5.0, GATE_Z - 1.0, 240.0, False),    # back across
+    # --- "a steep dive into the next gate" ----------------------------------
+    (9.0, -2.5, GATE_Z - 2.4, 215.0, False),
+    (6.0, -5.0, GATE_Z, 200.0),
+    # --- the wide return outside the row, flown -X --------------------------
+    (0.0, -6.5, GATE_Z, 190.0),
+    # --- the gate standing across the row, seen edge-on in the render -------
+    (-5.0, -5.5, GATE_Z, 250.0),
+    # --- "a tight braking maneuver to initiate a sharp right turn" ----------
+    (-10.0, -3.0, GATE_Z, 300.0, False),
+    # --- "concludes with a split-S maneuver over the first gate" -------------
+    (-9.0, 0.0, GATE_Z - LOOP_GAP, 180.0, False),
 ]
 
 def big_track() -> Track:
