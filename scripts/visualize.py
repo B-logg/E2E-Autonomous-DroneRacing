@@ -369,13 +369,25 @@ def main() -> int:
 
     env = SkyDreamer(track_name, max_steps=args.laps * 1200, seed=args.seed)
     agent, _ = build_agent(logdir, env)
+
+    # Pull the track onto the host once, here, rather than letting the drawing
+    # code call np.asarray on device arrays.  DreamerV3 sets
+    # jax_transfer_guard='disallow' process-wide; on CPU a device-to-host read
+    # is free and the guard never fires, so this is invisible until it runs on
+    # a GPU -- which is exactly how it got here.  Everything downstream is
+    # plain numpy and matplotlib, so it has no business touching a device.
+    import jax
+
+    with jax.transfer_guard("allow"):
+        track = jax.tree.map(np.asarray, env.cfg.track)
+
     print(f"flying {args.episodes} episodes on {track_name}, {args.laps} laps each", flush=True)
 
     for i in range(args.episodes):
         ep = fly(agent, env.cfg, args.seed + i, args.laps)
         stem = out / f"flight_{i}"
-        png = still(ep, env.cfg.track, out / f"figure_{i}.png")
-        gif = render(ep, env.cfg.track, stem, args.stride, args.fps)
+        png = still(ep, track, out / f"figure_{i}.png")
+        gif = render(ep, track, stem, args.stride, args.fps)
         print(f"  episode {i}: {ep['gates'][-1]} gates, {ep['duration']:.2f} s, "
               f"peak {ep['speed'].max():.1f} m/s"
               f"{' (crashed)' if ep['crashed'] else ''}", flush=True)

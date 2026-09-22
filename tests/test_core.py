@@ -388,6 +388,54 @@ def test_divergence_threshold_leaves_real_maneuvers_alone():
     assert bool(T.diverged(nan, jnp.zeros(3), jnp.zeros(3)))
 
 
+def _load_evaluate():
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location(
+        "sd_evaluate", pathlib.Path(__file__).resolve().parents[1] / "scripts" / "evaluate.py"
+    )
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def test_eval_feeds_the_agent_the_mask_training_fed_it():
+    """The evaluation harness builds its own observation dict instead of going
+    through embodied_env.py, so the two can drift -- and they did.  The mask is
+    bit-packed uint8; thresholding it (`(byte > 0.5) * 255`, left over from when
+    the env emitted a float mask) turns every byte holding one gate pixel into
+    eight lit pixels.  The policy then flies on a grossly dilated image, which
+    scored the 17M checkpoint at 0% success on the track it was trained on.
+
+    Pin the invariant: whatever the harness hands the agent must unpack to the
+    same image the environment produced."""
+    from skydreamer.env import PACK_MASK
+
+    ev = _load_evaluate()
+    cfg = EnvConfig(track=T.inverted_loop())
+
+    # Find a frame with a partly-filled byte -- an all-or-nothing mask cannot
+    # show the corruption, so an empty frame would make this test vacuous.
+    for seed in range(40):
+        st, obs = reset(jax.random.key(seed), cfg)
+        raw = np.asarray(obs["mask"])
+        if PACK_MASK and np.any((raw > 0) & (raw < 255)):
+            break
+    else:
+        pytest.skip("no partly-filled mask byte found; cannot detect corruption")
+
+    got = ev._agent_obs({k: np.asarray(v) for k, v in obs.items()})["mask"]
+    assert got.dtype == np.uint8
+    assert np.array_equal(got, raw), "the harness altered the packed mask"
+    assert np.array_equal(
+        np.asarray(unpack_mask(jnp.asarray(got))), np.asarray(unpack_mask(obs["mask"]))
+    )
+
+    # And the specific thing that was wrong really does destroy it.
+    corrupted = (raw > 0.5).astype(np.uint8) * 255
+    assert not np.array_equal(corrupted, raw)
+
+
 def test_eval_driver_stops_integrating_dead_episodes():
     """`scripts/evaluate.py` drives the batched env itself instead of going
     through embodied's driver, and the driver is what normally resets an env on
@@ -404,13 +452,7 @@ def test_eval_driver_stops_integrating_dead_episodes():
     The fix is `_hold`: freeze the state of any episode that is no longer
     flying.  This pins both halves -- that the runaway is real, and that
     freezing stops it."""
-    import importlib.util
-
-    spec = importlib.util.spec_from_file_location(
-        "sd_evaluate", pathlib.Path(__file__).resolve().parents[1] / "scripts" / "evaluate.py"
-    )
-    ev = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(ev)
+    ev = _load_evaluate()
 
     cfg = EnvConfig(track=T.inverted_loop())
     reset_b, step_b = batched(cfg)

@@ -106,6 +106,23 @@ def rollout(agent, cfg_env, episodes: int, laps: int, seed: int, chunk: int = 64
         return _rollout(agent, cfg_env, episodes, laps, seed, chunk)
 
 
+def _agent_obs(obs: dict) -> dict:
+    """The observation in exactly the dtypes embodied_env.py hands the agent.
+
+    `mask` passes through untouched: the env already emits it as uint8, and
+    when PACK_MASK is on those bytes are bit-packed pixels that the agent
+    unpacks itself.  This used to threshold it -- correct back when the env
+    emitted a float mask, and quietly destructive afterwards, because
+    `(byte > 0.5) * 255` turns every packed byte holding a single gate pixel
+    into 0xFF, i.e. eight lit pixels in a row.  The policy then flies on a
+    grossly dilated image and crashes on a track it was trained to fly.
+    """
+    return {
+        k: (v.astype(np.uint8) if k == "mask" else v.astype(np.float32))
+        for k, v in obs.items()
+    }
+
+
 def _hold(mask, frozen, moved):
     """Per-episode select between two pytrees: keep `frozen` where `mask`."""
     import jax
@@ -157,8 +174,7 @@ def _rollout(agent, cfg_env, episodes: int, laps: int, seed: int, chunk: int = 6
         for t in range(cfg_env.max_steps):
             with jax.transfer_guard("allow"):
                 o = {k: np.asarray(v) for k, v in obs.items()}
-            o["mask"] = (o["mask"] > 0.5).astype(np.uint8) * 255
-            o = {k: (v.astype(np.float32) if v.dtype != np.uint8 else v) for k, v in o.items()}
+            o = _agent_obs(o)
             o.update(
                 reward=np.zeros(b, np.float32),
                 is_first=is_first.copy(),
