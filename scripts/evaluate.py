@@ -106,6 +106,18 @@ def rollout(agent, cfg_env, episodes: int, laps: int, seed: int, chunk: int = 64
         return _rollout(agent, cfg_env, episodes, laps, seed, chunk)
 
 
+def _hold(mask, frozen, moved):
+    """Per-episode select between two pytrees: keep `frozen` where `mask`."""
+    import jax
+    import jax.numpy as jnp
+
+    return jax.tree.map(
+        lambda a, b: jnp.where(mask.reshape((-1,) + (1,) * (a.ndim - 1)), a, b),
+        frozen,
+        moved,
+    )
+
+
 def _rollout(agent, cfg_env, episodes: int, laps: int, seed: int, chunk: int = 64):
     import jax
     import jax.numpy as jnp
@@ -162,19 +174,35 @@ def _rollout(agent, cfg_env, episodes: int, laps: int, seed: int, chunk: int = 6
             a = np.asarray(act["action"], np.float32)
             u = np.clip((a + 1.0) / 2.0, 0.0, 1.0)
 
+            live = alive & ~finished
             for key in ("p_w", "v_w"):
                 rk = f"recon_info_{key}"
                 if rk in outs:
                     truth = np.asarray(getattr(st.s, "p" if key == "p_w" else "v"))
                     err = np.linalg.norm(np.asarray(outs[rk]) - truth, axis=-1)
-                    decode_err[key].append(err[alive].copy())
+                    decode_err[key].append(err[live].copy())
 
             with jax.transfer_guard("allow"):
-                st, obs, rew, term, trunc = step_b(st, jnp.asarray(u))
+                st_next, obs_next, rew, term, trunc = step_b(st, jnp.asarray(u))
+                # An episode that has crashed or finished must stop being
+                # integrated.  embodied's driver resets an env on `is_last`;
+                # driving the env directly means holding the state still
+                # ourselves.  Without this a drone that hit a gate on step 100
+                # keeps being flown for the remaining 1900 steps -- the
+                # divergence guard terminates it again every step, to nobody's
+                # benefit, while its body rates grow without bound until they
+                # overflow to NaN and the agent's finiteness assert fires.  The
+                # batch runs to the *slowest* episode, so one early crash is
+                # enough; only a policy good enough to keep episodes alive that
+                # long ever gets there, which is why this survived every smoke
+                # test and appeared on the 17M checkpoint.
+                hold = jnp.asarray(~live)
+                st = _hold(hold, st, st_next)
+                obs = _hold(hold, obs, obs_next)
                 p = np.asarray(st.s.p)
                 v = np.asarray(st.s.v)
                 gates = np.asarray(gates_passed(st))
-                terminated = np.asarray(term)
+                terminated = np.asarray(term) & live
                 plane = np.asarray(st.plane)
                 d_g = np.asarray(st.d_g)
                 t_g = np.asarray(st.t_g)
@@ -185,7 +213,6 @@ def _rollout(agent, cfg_env, episodes: int, laps: int, seed: int, chunk: int = 6
             acc = np.linalg.norm((v - prev_v) / CONTROL_DT - np.array([0, 0, 9.81]), axis=-1)
             prev_v = v
 
-            live = alive & ~finished
             vmax = np.where(live, np.maximum(vmax, speed), vmax)
             amax = np.where(live & (t > 2), np.maximum(amax, acc / 9.81), amax)
             steps = np.where(live, t + 1, steps)

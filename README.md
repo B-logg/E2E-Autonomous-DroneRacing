@@ -100,10 +100,11 @@ Other modes:
 | | |
 |---|---|
 | `./run.sh --setup-only` | install only, train nothing |
-| `./run.sh --eval-only` | re-score the most recent run |
+| `./run.sh --eval-only` | re-score the most recent run (100 episodes x 5 laps) |
+| `./run.sh --eval-only --big` | zero-shot numbers on the unseen Figure 9 track |
 | `./run.sh --big` | the 35M-step big-track preset (needs gate coordinates first) |
 | `./run.sh --video` | render the newest run flying: GIF + paper-style figures |
-| `./run.sh --video --track big` | fly it zero-shot on the Figure 9 track it never trained on |
+| `./run.sh --video --big` | fly it zero-shot on the Figure 9 track it never trained on |
 | `./run.sh --seed 1` | any extra flag is forwarded to `scripts/train.py` |
 
 Override paths with `SKYDREAMER_LOGDIR=/data/logs ./run.sh`.

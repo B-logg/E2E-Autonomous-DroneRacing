@@ -6,8 +6,14 @@
 #   ./run.sh              ~30-50 h the paper's run: 17M steps, 3 phases, then eval
 #   ./run.sh --resume              continue the newest run after an interruption
 #   ./run.sh --setup-only ~10 min  install everything, train nothing
-#   ./run.sh --eval-only  ~10 min  re-evaluate the newest run
+#   ./run.sh --eval-only  ~10 min  re-evaluate the newest run (100 eps x 5 laps)
 #   ./run.sh --video      ~5 min   render the newest run flying (gif + figures)
+#
+# Add `--big` to either of the last two to use the Figure 9 track the policy
+# never trained on, i.e. the out-of-distribution test:
+#
+#   ./run.sh --eval-only --big     zero-shot numbers on the unseen big track
+#   ./run.sh --video --big         and the same flight rendered
 #
 # Nothing is needed on the server beyond an NVIDIA GPU, a CUDA driver, git and
 # curl. Python is installed by uv; no root, no conda, no system packages.
@@ -37,6 +43,12 @@ for arg in "$@"; do
     *)            EXTRA+=("${arg}") ;;
   esac
 done
+
+# `--big` selects the big-track *training* preset; for eval and video it has to
+# become the `--track big` those scripts take, so that `--eval-only --big` and
+# `--eval-only --track big` mean the same thing.
+TRACK_ARGS=()
+if [ "${PRESET}" = "big" ]; then TRACK_ARGS=(--track big); fi
 
 log() { printf '\n\033[1;36m==> %s\033[0m\n' "$*"; }
 # An aborted run leaves an empty logdir behind, and it sorts newest -- so pick
@@ -246,16 +258,17 @@ if [ "${MODE}" = "video" ]; then
   # matplotlib is only needed for this mode, so it is not in the base install
   "${PY}" -c "import matplotlib, PIL" 2>/dev/null || "${PIP[@]}" matplotlib pillow
   "${PY}" "${ROOT}/scripts/visualize.py" --logdir "${RUN_DIR}" \
-      "${EXTRA[@]+"${EXTRA[@]}"}"
+      "${TRACK_ARGS[@]+"${TRACK_ARGS[@]}"}" "${EXTRA[@]+"${EXTRA[@]}"}"
   exit 0
 fi
 
 # --------------------------------------------------------------------------
 if [ "${MODE}" = "eval" ]; then
-  RUN_DIR="$(ls -td "${LOGROOT}"/*/ 2>/dev/null | head -1 || true)"
-  [ -n "${RUN_DIR}" ] || die "no runs under ${LOGROOT}"
+  RUN_DIR="$(latest_run)"
+  [ -n "${RUN_DIR}" ] || die "no finished run under ${LOGROOT}"
   log "Evaluating ${RUN_DIR}"
-  "${PY}" "${ROOT}/scripts/evaluate.py" --logdir "${RUN_DIR}" "${EXTRA[@]+"${EXTRA[@]}"}"
+  "${PY}" "${ROOT}/scripts/evaluate.py" --logdir "${RUN_DIR}" \
+      "${TRACK_ARGS[@]+"${TRACK_ARGS[@]}"}" "${EXTRA[@]+"${EXTRA[@]}"}"
   exit 0
 fi
 

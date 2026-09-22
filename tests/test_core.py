@@ -3,6 +3,8 @@
 Run: .venv/bin/python -m pytest tests -q
 """
 
+import pathlib
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -386,7 +388,61 @@ def test_divergence_threshold_leaves_real_maneuvers_alone():
     assert bool(T.diverged(nan, jnp.zeros(3), jnp.zeros(3)))
 
 
-def test_big_track_matches_figure_nine(): 
+def test_eval_driver_stops_integrating_dead_episodes():
+    """`scripts/evaluate.py` drives the batched env itself instead of going
+    through embodied's driver, and the driver is what normally resets an env on
+    `is_last`.  Without an equivalent, a drone that crashes on step 100 keeps
+    being flown for the remaining 1900 steps of the batch: the guard terminates
+    it again every step to no effect while its rates grow without bound, until
+    they overflow and DreamerV3's finiteness assert kills the evaluation.
+
+    That is exactly what happened on the 17M checkpoint -- observed body rates
+    of -2240 rad/s and a NaN row.  Every smoke test missed it because an untrained
+    policy crashes every episode almost at once, so the batch ends before the
+    runaway has time to grow.
+
+    The fix is `_hold`: freeze the state of any episode that is no longer
+    flying.  This pins both halves -- that the runaway is real, and that
+    freezing stops it."""
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location(
+        "sd_evaluate", pathlib.Path(__file__).resolve().parents[1] / "scripts" / "evaluate.py"
+    )
+    ev = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(ev)
+
+    cfg = EnvConfig(track=T.inverted_loop())
+    reset_b, step_b = batched(cfg)
+    b, horizon = 8, 2000
+
+    def fly(freeze: bool) -> float:
+        st, obs = reset_b(jax.random.split(jax.random.key(0), b))
+        alive = np.ones(b, bool)
+        worst = 0.0
+        for t in range(horizon):
+            u = jax.random.uniform(jax.random.key(1000 + t), (b, 4))
+            st_next, obs_next, _, term, _ = step_b(st, u)
+            if freeze:
+                hold = jnp.asarray(~alive)
+                st = ev._hold(hold, st, st_next)
+                obs = ev._hold(hold, obs, obs_next)
+            else:
+                st, obs = st_next, obs_next
+            alive &= ~(np.asarray(term) & alive)
+            rates = np.asarray(obs["rates"])
+            if not np.isfinite(rates).all():
+                return float("inf")
+            worst = max(worst, float(np.abs(rates).max()))
+        return worst
+
+    # Kept flying after death, the rates run far past anything physical.
+    assert fly(freeze=False) > 10 * T.RATE_DIVERGENCE
+    # Frozen at the moment the guard fires, they stay inside its threshold.
+    assert fly(freeze=True) <= T.RATE_DIVERGENCE
+
+
+def test_big_track_matches_figure_nine():
     """The big track is measured off Figure 9's top-down and side views in the
     PDF (page 14 -- the arXiv HTML drops those panels because they are vector).
     These are the positions that measurement gave; they are pinned so a future
