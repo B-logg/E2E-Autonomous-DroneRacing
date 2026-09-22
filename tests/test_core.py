@@ -436,10 +436,14 @@ def test_eval_driver_stops_integrating_dead_episodes():
             worst = max(worst, float(np.abs(rates).max()))
         return worst
 
-    # Kept flying after death, the rates run far past anything physical.
+    # Kept flying after death, the rates run away -- orders of magnitude past
+    # anything physical, and on a longer batch all the way to NaN.
     assert fly(freeze=False) > 10 * T.RATE_DIVERGENCE
-    # Frozen at the moment the guard fires, they stay inside its threshold.
-    assert fly(freeze=True) <= T.RATE_DIVERGENCE
+    # Frozen, they stay bounded.  Not *at* the threshold: the guard fires on
+    # the step that crosses 50 rad/s, and that step's observation is recorded
+    # before the freeze takes effect on the next one, so one step's worth of
+    # overshoot is expected and correct.  What matters is that it stops there.
+    assert fly(freeze=True) < 2 * T.RATE_DIVERGENCE
 
 
 def test_big_track_matches_figure_nine():

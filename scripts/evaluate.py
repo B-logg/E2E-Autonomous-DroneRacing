@@ -343,9 +343,13 @@ def main() -> int:
     text = report(track, summary)
     print(text)
 
-    out = args.out or (logdir / "evaluation.json")
+    # Scoring a run on a track it did not train on must not overwrite the
+    # training-track result -- `--eval-only` and `--eval-only --big` both land
+    # in the same logdir.  Same convention visualize.py uses for `video_big/`.
+    stem = "evaluation" if track == task.split("_", 1)[1] else f"evaluation_{track}"
+    out = args.out or (logdir / f"{stem}.json")
     out.write_text(json.dumps({"track": track, "laps": args.laps, **summary}, indent=2))
-    (logdir / "evaluation.txt").write_text(text)
+    (logdir / f"{stem}.txt").write_text(text)
     print(f"\nwrote {out}")
     return 0
 

@@ -15,6 +15,11 @@
 #   ./run.sh --eval-only --big     zero-shot numbers on the unseen big track
 #   ./run.sh --video --big         and the same flight rendered
 #
+# Or all four of those in sequence, which is everything a finished run has to
+# say -- scored and rendered on both tracks:
+#
+#   ./run.sh --all        ~25 min
+#
 # Nothing is needed on the server beyond an NVIDIA GPU, a CUDA driver, git and
 # curl. Python is installed by uv; no root, no conda, no system packages.
 #
@@ -39,6 +44,7 @@ for arg in "$@"; do
     --setup-only) MODE="setup" ;;
     --eval-only)  MODE="eval" ;;
     --video)      MODE="video" ;;
+    --all)        MODE="all" ;;
     --big)        PRESET="big" ;;
     *)            EXTRA+=("${arg}") ;;
   esac
@@ -169,7 +175,17 @@ if ! command -v uv >/dev/null 2>&1; then
 fi
 command -v uv >/dev/null 2>&1 || die "uv install failed; install Python ${PY_VERSION} manually and re-run"
 
-if [ ! -x "${VENV}/bin/python" ]; then
+# A venv is `bin/python` *and* `pyvenv.cfg`.  Testing only the first lets a
+# half-made one through -- an interrupted setup, or a /tmp reaper pruning the
+# file -- and then `uv pip install --python .../bin/python` resolves past the
+# venv to the interpreter it was built from and refuses with "externally
+# managed", which says nothing about the actual cause.  Rebuild instead: a venv
+# is disposable, and .deps-ok goes with it so the packages are reinstalled.
+if [ ! -x "${VENV}/bin/python" ] || [ ! -f "${VENV}/pyvenv.cfg" ]; then
+  if [ -e "${VENV}" ]; then
+    log "Rebuilding the incomplete virtual environment at ${VENV}"
+    rm -rf "${VENV}"
+  fi
   uv venv --python "${PY_VERSION}" "${VENV}"
 fi
 PY="${VENV}/bin/python"
@@ -251,24 +267,75 @@ if [ "${MODE}" = "setup" ]; then
 fi
 
 # --------------------------------------------------------------------------
-if [ "${MODE}" = "video" ]; then
-  RUN_DIR="$(latest_run)"
-  [ -n "${RUN_DIR}" ] || die "no finished run under ${LOGROOT}"
-  log "Rendering ${RUN_DIR}"
-  # matplotlib is only needed for this mode, so it is not in the base install
+# Scoring and rendering, shared by --eval-only / --video / --all.
+do_eval() {
+  log "Evaluating ${RUN_DIR} $*"
+  "${PY}" "${ROOT}/scripts/evaluate.py" --logdir "${RUN_DIR}" "$@"
+}
+
+do_video() {
+  # matplotlib is only needed for rendering, so it is not in the base install
   "${PY}" -c "import matplotlib, PIL" 2>/dev/null || "${PIP[@]}" matplotlib pillow
-  "${PY}" "${ROOT}/scripts/visualize.py" --logdir "${RUN_DIR}" \
-      "${TRACK_ARGS[@]+"${TRACK_ARGS[@]}"}" "${EXTRA[@]+"${EXTRA[@]}"}"
+  log "Rendering ${RUN_DIR} $*"
+  "${PY}" "${ROOT}/scripts/visualize.py" --logdir "${RUN_DIR}" "$@"
+}
+
+if [ "${MODE}" = "video" ]; then
+  RUN_DIR="$(latest_run || true)"
+  [ -n "${RUN_DIR}" ] || die "no finished run under ${LOGROOT}"
+  do_video "${TRACK_ARGS[@]+"${TRACK_ARGS[@]}"}" "${EXTRA[@]+"${EXTRA[@]}"}"
   exit 0
 fi
 
 # --------------------------------------------------------------------------
 if [ "${MODE}" = "eval" ]; then
-  RUN_DIR="$(latest_run)"
+  RUN_DIR="$(latest_run || true)"
   [ -n "${RUN_DIR}" ] || die "no finished run under ${LOGROOT}"
-  log "Evaluating ${RUN_DIR}"
-  "${PY}" "${ROOT}/scripts/evaluate.py" --logdir "${RUN_DIR}" \
-      "${TRACK_ARGS[@]+"${TRACK_ARGS[@]}"}" "${EXTRA[@]+"${EXTRA[@]}"}"
+  do_eval "${TRACK_ARGS[@]+"${TRACK_ARGS[@]}"}" "${EXTRA[@]+"${EXTRA[@]}"}"
+  exit 0
+fi
+
+# --------------------------------------------------------------------------
+# Everything a finished run has to say, in one go: scored and rendered on the
+# track it trained on, then zero-shot on the unseen Figure 9 track.
+if [ "${MODE}" = "all" ]; then
+  RUN_DIR="$(latest_run || true)"
+  [ -n "${RUN_DIR}" ] || die "no finished run under ${LOGROOT}"
+  GIVEN="${EXTRA[*]+${EXTRA[*]}}"
+  [ -z "${GIVEN}" ] || die \
+    "--all runs four fixed steps and takes no extra arguments; pass '${GIVEN}' to a single mode instead"
+
+  # Each step is independent, so one failure must not cost the other three --
+  # the big track in particular is out of distribution by construction, and a
+  # policy falling over there is a result, not a reason to skip the renders.
+  STEPS=("eval::training track"
+         "eval:--track big:big track (unseen)"
+         "video::training track"
+         "video:--track big:big track (unseen)")
+  NFAIL=0
+  FAILED=""
+  N=0
+  for entry in "${STEPS[@]}"; do
+    kind="${entry%%:*}"; rest="${entry#*:}"
+    spec="${rest%%:*}"; what="${rest#*:}"
+    read -r -a args <<< "${spec}"
+    N=$(( N + 1 ))
+    log "[${N}/${#STEPS[@]}] ${kind} on the ${what}"
+    if ! "do_${kind}" "${args[@]+"${args[@]}"}"; then
+      NFAIL=$(( NFAIL + 1 ))
+      FAILED="${FAILED}${FAILED:+, }${kind} ${spec}"
+      printf '\033[1;31m  step failed: %s %s -- continuing\033[0m\n' "${kind}" "${spec}" >&2
+    fi
+  done
+
+  log "Done"
+  echo "  training track   ${RUN_DIR}/evaluation.txt      ${RUN_DIR}/video/"
+  echo "  big track (OOD)  ${RUN_DIR}/evaluation_big.txt  ${RUN_DIR}/video_big/"
+  if [ "${NFAIL}" -ne 0 ]; then
+    printf '\033[1;31m  %d of %d steps failed: %s\033[0m\n' \
+        "${NFAIL}" "${#STEPS[@]}" "${FAILED}" >&2
+    exit 1
+  fi
   exit 0
 fi
 
@@ -296,7 +363,7 @@ fi
 #   phase 3  13M -> 17M  entropy 3e-4 -> 1e-5, lr 4e-5 -> 2e-6
 # --------------------------------------------------------------------------
 if [ "${MODE}" = "resume" ]; then
-  RUN_DIR="$(latest_run)"
+  RUN_DIR="$(latest_run || true)"
   [ -n "${RUN_DIR}" ] || die "no run to resume under ${LOGROOT}"
   log "Resuming ${RUN_DIR}"
   echo "DreamerV3 picks up from the checkpoint in this logdir; phases re-run"
