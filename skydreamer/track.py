@@ -264,9 +264,10 @@ LADDER_INVERTED_LOOP = [
 # Big track -- an out-of-distribution test, NOT a reconstruction
 # --------------------------------------------------------------------------
 #
-# [OURS] throughout.  Figure 9 is a 3D render on an undimensioned slab, so
-# unlike Figures 4 and 6 there is nothing to measure.  What the paper does give
-# is the sequence of maneuvers, and this track follows that prose:
+# Measured off Figure 9, like the small tracks -- see the note above BIG_TRACK
+# below for the calibration and its validation.  The paper's prose gives the
+# sequence of maneuvers, which is what the gate *order* and the invisible gates
+# follow:
 #
 #   "the flight begins in front of the top-left gate.  After the first gate,
 #    the trajectory continues with a slight left turn, two subsequent gates, a

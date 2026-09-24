@@ -4,6 +4,7 @@ Run: .venv/bin/python -m pytest tests -q
 """
 
 import pathlib
+import sys
 
 import jax
 import jax.numpy as jnp
@@ -386,6 +387,22 @@ def test_divergence_threshold_leaves_real_maneuvers_alone():
     assert bool(T.diverged(jnp.array([60.0, 0.0, 0.0]), jnp.zeros(3), jnp.zeros(3)))
     nan = jnp.array([jnp.nan, 0.0, 0.0])
     assert bool(T.diverged(nan, jnp.zeros(3), jnp.zeros(3)))
+
+
+def test_exported_track_files_match_the_code():
+    """`tracks/` is generated from `track.py`. A second hand-maintained copy of
+    the same coordinates drifts from the first, and then nobody can say which
+    layout the policy actually flew."""
+    import subprocess
+
+    root = pathlib.Path(__file__).resolve().parents[1]
+    r = subprocess.run(
+        [sys.executable, str(root / "scripts" / "export_tracks.py"), "--check"],
+        capture_output=True,
+        text=True,
+        cwd=root,
+    )
+    assert r.returncode == 0, r.stdout + r.stderr
 
 
 def _load_evaluate():

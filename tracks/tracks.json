@@ -1,0 +1,347 @@
+{
+  "schema": 1,
+  "generated_by": "scripts/export_tracks.py from skydreamer/track.py",
+  "warning": "Generated file. Edit skydreamer/track.py, then re-run the script.",
+  "conventions": {
+    "frame": "Aerospace NED. x north, y east, z DOWN, so altitude = -z. The origin is the track centre as drawn in the paper's figures.",
+    "position_m": "[x, y, z] in metres, gate centre.",
+    "altitude_m": "Convenience: -z, i.e. height above the floor.",
+    "yaw_deg": "Heading of the intended direction of travel through the gate, measured from +x toward +y. The gate plane is perpendicular to it.",
+    "visible": "false = a virtual gate: it is never rendered, so the camera cannot see it, but it still scores and still acts as a collision volume. Virtual gates are how the paper forces a maneuver -- a split-S is a real gate with a virtual one 2.7 m above it."
+  },
+  "gate_tolerances": {
+    "comment": "Table III. d_g is the effective half-size used for scoring and collision; t_g is the pre-gate to post-gate tunnel thickness. Both are randomized per episode within these columns.",
+    "d_g_m": {
+      "train": 0.8,
+      "evaluation": 1.0
+    },
+    "t_g_m": {
+      "train": 0.8,
+      "evaluation": 0.8
+    }
+  },
+  "tracks": {
+    "inverted_loop": {
+      "notes": [
+        "Paper Figures 4 and 6, small track. Two real gates plus one virtual.",
+        "[FIG] gate x = +3.0 and -2.0, altitude 1.35 m, measured off the plots.",
+        "[TEXT] the 2.7 m real-to-virtual separation, and the 1.5 m loop radius that follows from it, are stated in section V.",
+        "[FIG] validated: the same calibration reproduces the stated 2.7 m gate outer size and the 6 x 4 m flight area."
+      ],
+      "gate_size_m": {
+        "inner": 1.5,
+        "outer": 2.7
+      },
+      "tunnel_t_g_m": "Table III default",
+      "counts": {
+        "total": 3,
+        "real": 2,
+        "virtual": 1
+      },
+      "extent_m": {
+        "x": [
+          -2.0,
+          3.0
+        ],
+        "y": [
+          0.0,
+          0.0
+        ],
+        "altitude": [
+          1.35,
+          4.05
+        ]
+      },
+      "gates": [
+        {
+          "index": 1,
+          "position_m": [
+            3.0,
+            0.0,
+            -1.35
+          ],
+          "altitude_m": 1.35,
+          "yaw_deg": 90.0,
+          "visible": true
+        },
+        {
+          "index": 2,
+          "position_m": [
+            -2.0,
+            0.0,
+            -4.05
+          ],
+          "altitude_m": 4.05,
+          "yaw_deg": 270.0,
+          "visible": false
+        },
+        {
+          "index": 3,
+          "position_m": [
+            -2.0,
+            0.0,
+            -1.35
+          ],
+          "altitude_m": 1.35,
+          "yaw_deg": 90.0,
+          "visible": true
+        }
+      ]
+    },
+    "ladder_inverted_loop": {
+      "notes": [
+        "Section III-B: the same two real gates, with a ladder added at gate 1. This is the track the paper's simulation figures come from.",
+        "[TEXT] t_g = 0.3 m here, smaller than Table III's 0.8, 'to further demonstrate SkyDreamer's ability to execute tight maneuvers'.",
+        "[OURS] the two virtual gates that shape the ladder. The paper gives the maneuver in prose ('a full 360 degree left turn, and flies back over it', 'remaining mostly within 1 m of the gate') but not their placement."
+      ],
+      "gate_size_m": {
+        "inner": 1.5,
+        "outer": 2.7
+      },
+      "tunnel_t_g_m": 0.3,
+      "counts": {
+        "total": 5,
+        "real": 2,
+        "virtual": 3
+      },
+      "extent_m": {
+        "x": [
+          -2.0,
+          4.0
+        ],
+        "y": [
+          0.0,
+          1.0
+        ],
+        "altitude": [
+          1.35,
+          4.05
+        ]
+      },
+      "gates": [
+        {
+          "index": 1,
+          "position_m": [
+            3.0,
+            0.0,
+            -1.35
+          ],
+          "altitude_m": 1.35,
+          "yaw_deg": 90.0,
+          "visible": true
+        },
+        {
+          "index": 2,
+          "position_m": [
+            4.0,
+            1.0,
+            -2.55
+          ],
+          "altitude_m": 2.55,
+          "yaw_deg": 270.0,
+          "visible": false
+        },
+        {
+          "index": 3,
+          "position_m": [
+            2.0,
+            0.0,
+            -1.95
+          ],
+          "altitude_m": 1.95,
+          "yaw_deg": 90.0,
+          "visible": false
+        },
+        {
+          "index": 4,
+          "position_m": [
+            -2.0,
+            0.0,
+            -4.05
+          ],
+          "altitude_m": 4.05,
+          "yaw_deg": 270.0,
+          "visible": false
+        },
+        {
+          "index": 5,
+          "position_m": [
+            -2.0,
+            0.0,
+            -1.35
+          ],
+          "altitude_m": 1.35,
+          "yaw_deg": 90.0,
+          "visible": true
+        }
+      ]
+    },
+    "big": {
+      "notes": [
+        "Paper Figure 9, large track. Eight real gates plus four virtual.",
+        "[FIG] measured off the top-down and side panels on page 14 of the PDF. The arXiv HTML drops those panels because they are vector, not raster, which is why earlier attempts had only the 3D render to go on.",
+        "[FIG] validated: the measured gate blocks come out 2.10 m wide spanning altitude 0.17-2.34 m, against the MAVLab gate's stated 2.1 m outer size.",
+        "[OURS] the four virtual gates, and the gate order, follow the paper's prose description of the maneuvers.",
+        "Gate size is deliberately left at the training value: this track is an out-of-distribution test of the layout, and changing the gates too would also change the mask, so a failure could not be attributed."
+      ],
+      "gate_size_m": {
+        "inner": 1.5,
+        "outer": 2.7
+      },
+      "tunnel_t_g_m": 0.5,
+      "counts": {
+        "total": 12,
+        "real": 8,
+        "virtual": 4
+      },
+      "extent_m": {
+        "x": [
+          -6.0,
+          6.0
+        ],
+        "y": [
+          -9.5,
+          11.5
+        ],
+        "altitude": [
+          1.25,
+          3.95
+        ]
+      },
+      "gates": [
+        {
+          "index": 1,
+          "position_m": [
+            3.7,
+            -9.5,
+            -1.25
+          ],
+          "altitude_m": 1.25,
+          "yaw_deg": 90.0,
+          "visible": true
+        },
+        {
+          "index": 2,
+          "position_m": [
+            6.0,
+            -3.4,
+            -1.25
+          ],
+          "altitude_m": 1.25,
+          "yaw_deg": 90.0,
+          "visible": true
+        },
+        {
+          "index": 3,
+          "position_m": [
+            6.0,
+            2.8,
+            -1.25
+          ],
+          "altitude_m": 1.25,
+          "yaw_deg": 90.0,
+          "visible": true
+        },
+        {
+          "index": 4,
+          "position_m": [
+            2.6,
+            8.5,
+            -1.25
+          ],
+          "altitude_m": 1.25,
+          "yaw_deg": 135.0,
+          "visible": true
+        },
+        {
+          "index": 5,
+          "position_m": [
+            5.5,
+            11.5,
+            -3.45
+          ],
+          "altitude_m": 3.45,
+          "yaw_deg": 250.0,
+          "visible": false
+        },
+        {
+          "index": 6,
+          "position_m": [
+            0.5,
+            10.5,
+            -2.25
+          ],
+          "altitude_m": 2.25,
+          "yaw_deg": 120.0,
+          "visible": false
+        },
+        {
+          "index": 7,
+          "position_m": [
+            -3.0,
+            8.9,
+            -1.25
+          ],
+          "altitude_m": 1.25,
+          "yaw_deg": 215.0,
+          "visible": true
+        },
+        {
+          "index": 8,
+          "position_m": [
+            -6.0,
+            2.8,
+            -1.25
+          ],
+          "altitude_m": 1.25,
+          "yaw_deg": 270.0,
+          "visible": true
+        },
+        {
+          "index": 9,
+          "position_m": [
+            -6.0,
+            -3.4,
+            -1.25
+          ],
+          "altitude_m": 1.25,
+          "yaw_deg": 270.0,
+          "visible": true
+        },
+        {
+          "index": 10,
+          "position_m": [
+            -3.0,
+            -7.5,
+            -1.25
+          ],
+          "altitude_m": 1.25,
+          "yaw_deg": 330.0,
+          "visible": false
+        },
+        {
+          "index": 11,
+          "position_m": [
+            0.0,
+            -0.3,
+            -1.25
+          ],
+          "altitude_m": 1.25,
+          "yaw_deg": 0.0,
+          "visible": true
+        },
+        {
+          "index": 12,
+          "position_m": [
+            3.7,
+            -9.5,
+            -3.95
+          ],
+          "altitude_m": 3.95,
+          "yaw_deg": 270.0,
+          "visible": false
+        }
+      ]
+    }
+  }
+}

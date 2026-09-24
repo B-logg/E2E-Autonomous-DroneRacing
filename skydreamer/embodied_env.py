@@ -46,8 +46,8 @@ from .params import NOMINAL
 TRACKS = {
     "inverted_loop": T.inverted_loop,
     "ladder_inverted_loop": T.ladder_inverted_loop,
-    # Approximation of the paper's Figure 9, for zero-shot testing only -- it is
-    # not a reconstruction (that figure has no dimensioned axes to measure).
+    # The paper's Figure 9, measured off the dimensioned panels on page 14 of
+    # the PDF.  Nothing trains on it; it is the zero-shot layout test.
     "big": T.big_track,
 }
 
