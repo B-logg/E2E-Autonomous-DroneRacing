@@ -235,6 +235,10 @@ if [ ! -f "${VENV}/.deps-ok" ]; then
   "${PIP[@]}" "numpy<2" elements ninjax optax portal scope granular einops chex \
       jaxtyping colored_traceback tqdm "ruamel.yaml" msgpack rich cloudpickle psutil \
       pytest
+  # Rendering, installed up front rather than on demand.  run_test.sh evaluates
+  # a live training run and must not pip-install into the venv that run is
+  # using -- resolving matplotlib could pull numpy out from under the trainer.
+  "${PIP[@]}" matplotlib pillow
   "${PIP[@]}" -e "${ROOT}"
   touch "${VENV}/.deps-ok"
 fi
@@ -277,7 +281,7 @@ do_eval() {
 }
 
 do_video() {
-  # matplotlib is only needed for rendering, so it is not in the base install
+  # Installed by the setup step; this is a fallback for an older venv.
   "${PY}" -c "import matplotlib, PIL" 2>/dev/null || "${PIP[@]}" matplotlib pillow
   log "Rendering ${RUN_DIR} $*"
   "${PY}" "${ROOT}/scripts/visualize.py" --logdir "${RUN_DIR}" "$@"

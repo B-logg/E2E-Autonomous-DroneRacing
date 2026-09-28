@@ -122,8 +122,12 @@ run_once() {
   STEP="${STEP:-0}"   # an all-zero name is step 0, not an empty string
 
   if [ "${VIDEO}" = "1" ]; then
-    "${PY}" -c "import matplotlib, PIL" 2>/dev/null \
-      || die "matplotlib missing; install it or pass --no-video"
+    # Deliberately does not install it: pip-resolving into the venv a training
+    # run is using could replace numpy under the trainer.  ./run.sh installs it
+    # during setup, so this only fires on a venv built before that change.
+    "${PY}" -c "import matplotlib, PIL" 2>/dev/null || die \
+      "matplotlib missing from ${VENV}. Either pass --no-video, or install it
+  when no training is running:  ${VENV}/bin/python -m pip install matplotlib pillow"
   fi
 
   for track in "${TRACKS[@]}"; do
