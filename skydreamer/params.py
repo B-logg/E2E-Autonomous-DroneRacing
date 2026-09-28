@@ -65,10 +65,13 @@ NOMINAL: dict[str, float] = {
 # Order matters: this is the layout of the `d` vector the world model decodes.
 PARAM_NAMES: tuple[str, ...] = tuple(NOMINAL.keys())
 
-# Not in Table II.  The paper's angle-of-attack / advance-ratio terms divide by
-# `r * w_bar` where `r` is never defined; it is the propeller radius.  MonoRace
-# (arXiv:2601.15222) reports 5.1" props on the same airframe.
-PROP_RADIUS = 0.0648  # m, = 5.1 inch / 2
+# Not in SkyDreamer's Table II, but given by the source it defers to for the
+# dynamics.  MonoRace (Bahnam et al., arXiv:2601.15222) defines `r` as "the
+# propeller radius" and puts the value in a footnote: 0.0485775 m, estimated
+# rather than measured, and not randomized.  Note it is not the geometric
+# radius of the 5.1" props (0.06477 m) but 0.75 of it -- the 75% blade station,
+# the conventional reference section in blade element theory.
+PROP_RADIUS = 0.0485775  # m [MonoRace footnote 4]
 
 GRAVITY = 9.81
 

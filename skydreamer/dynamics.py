@@ -21,8 +21,15 @@ from .params import GRAVITY, PROP_RADIUS, DynParams
 # Section II-D: RK4 with a 2.2 ms timestep.  Section II-C: the policy runs at
 # f_c = 90 Hz.  5 * 2.2 ms = 11.0 ms, which is 90.9 Hz -- the paper's two
 # numbers are inconsistent at the 1% level.  See docs/paper_gaps.md.
-DT_INNER = 2.2e-3
-SUBSTEPS = 5
+# The paper prints "a timestep of 2.2 ms" and a 90 Hz control frequency, and
+# those disagree: 90 Hz over five substeps is 2.2222 ms, so the printed figure
+# is rounded.  Taking 2.2 literally runs the simulator at 90.909 Hz -- 1% fast,
+# 172 ms of drift over a 17 s flight -- and leaves it inconsistent with the
+# rate penalty, which divides by f_c = 90 Hz.  Derive it from 90 Hz instead.
+CONTROL_FREQ = 90.0
+SUBSTEPS_PER_STEP = 5
+DT_INNER = 1.0 / (CONTROL_FREQ * SUBSTEPS_PER_STEP)
+SUBSTEPS = SUBSTEPS_PER_STEP
 CONTROL_DT = DT_INNER * SUBSTEPS
 
 # How to read the paper's horizontal advance ratio

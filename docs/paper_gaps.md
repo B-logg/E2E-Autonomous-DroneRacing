@@ -39,34 +39,54 @@ differs from theirs, so top speeds and lap times will not match exactly.
 match a physical drone. That is what the high-speed flight logs in
 `docs/datasets.md` §4 are for.
 
-### A1. Horizontal advance ratio `mu` — 🔴
-The paper prints
+### A1. Horizontal advance ratio `mu` — ✅ RESOLVED (was 🔴)
+Both SkyDreamer and MonoRace print
 
 > `mu_{xx,yy} = atan((v_x^B2 + v_y^B2) / (r * w_bar))`
 
-Read literally this is a *squared* speed over a speed. At 20 m/s it yields
-`atan(400/326) = 0.89 rad`, and with `k_hor = 7.245` the thrust would go up
-~640%. The drone is unflyable.
+which is a *squared* speed over a speed: the argument of `atan` carries m/s.
+Read literally, with `k_hor = 7.245`, thrust goes up 438% at 13 m/s.
 
-**Default:** `dynamics.ADVANCE_RATIO_MODE = "norm"` → `atan(|v_xy| / (r w_bar))`,
-which is dimensionally consistent with the angle-of-attack term printed
-immediately above it. Gives ~44% translational lift at 20 m/s.
+**Resolved in favour of `atan(|v_xy| / (r w_bar))`** -- our long-standing
+default, `dynamics.ADVANCE_RATIO_MODE = "norm"`. Four independent arguments,
+all pointing the same way:
 
-**Still suspicious:** 44% is high; real translational lift is 5–15%. Either
-`k_hor` is defined against a different normalizer, or `r` is not the propeller
-radius. Set `ADVANCE_RATIO_MODE = "literal"` to see the pathology for yourself.
+1. **MonoRace's own words.** It calls `mu` "the effective advance ratio of the
+   blade". An advance ratio is `V / (Omega R)` -- dimensionless by definition.
+   The printed formula is not.
+2. **Its sibling equation.** `alpha = atan(v_z^B / (r w_bar))` shares the
+   denominator and *is* consistent. The two are the vertical and horizontal
+   halves of the same construction, so the horizontal one wants the
+   magnitude `|v_xy|`, not the sum of squares.
+3. **The fitted coefficient.** `k_hor = 7.245` was identified from real flight.
+   Against `|v|` it yields +15% at 5 m/s rising to +46% at 20 m/s -- the range
+   a rotor actually gains in forward flight. Against `v^2` it yields +438% at
+   13 m/s. Had they fitted against `v^2`, the coefficient would have come out
+   near 0.5, not 7.245.
+4. **The cited source.** The advance-ratio extension is attributed to a
+   separate aerodynamics reference, where the standard definition is `V/(Omega R)`.
 
-**How we'll know:** identify the term from real high-speed flight logs (thrust
-residual vs. horizontal speed at fixed RPM), exactly as MonoRace describes for
-its own coefficients.
+Most likely a square root lost in typesetting, propagated from MonoRace into
+SkyDreamer (which restates the model rather than re-deriving it: "for full
+details, we refer the reader to those sources").
 
-### A2. `r` in the `alpha` and `mu` denominators — 🔴
-Never defined in the paper. We use the propeller radius,
-`params.PROP_RADIUS = 0.0648 m` (5.1 inch props, per MonoRace arXiv:2601.15222
-on the same airframe). This makes `alpha` come out to a few percent of thrust
-at realistic climb rates, which is the right order of magnitude, and it gives
-the correct *sign* (climbing loses thrust — pinned by
-`test_climb_reduces_thrust_descent_increases_it`).
+**Residual risk:** none for the simulation reproduction -- the simulator is the
+ground truth there. It reappears at sim-to-real, where the term has to match a
+physical drone.
+
+### A2. `r` in the `alpha` and `mu` denominators — ✅ RESOLVED (was 🔴)
+Never defined in SkyDreamer, but MonoRace -- the source SkyDreamer defers to --
+calls it "the propeller radius" and gives the value in a footnote:
+
+    PROP_RADIUS = 0.0485775 m    # not randomized
+
+Note it is *not* the geometric radius of the 5.1" props (0.06477 m) but 0.75 of
+it, the 75% blade station -- the conventional reference section in blade
+element theory. Described as "estimated", so it is a fitted effective radius,
+not a measurement.
+
+We previously used 0.0648 (the geometric radius), 33% too large, which
+*under*-stated the translational lift by about a third.
 
 ### A3. `k_angle` vs `k_alpha` — 🟢
 Table II names it `k_angle`; the force equation names it `k_alpha`. Same
@@ -75,23 +95,43 @@ coefficient. We use `k_angle` everywhere.
 ### A4. `w_i = (w_ci - w_i)/tau` — 🟢
 Obvious typo for `w_i_dot`. Implemented as the derivative.
 
-### A5. `k_l` vs `k` — 🟢
-The motor-response equation uses `k_l` in `(1 - k_l) u_tilde`; Table II only
-lists `k`. Ferede's public implementation (`optimal_quad_control_RL`) uses the
-same `k` in both places. We do too.
+### A5. `k_l` vs `k` — ✅ RESOLVED (was 🟢)
+The motor-response equation uses both `k` and `k_l`:
 
-### A6. Control period — 🟡
-The paper says RK4 at 2.2 ms *and* `f_c = 90 Hz`. 1/90 s = 11.111 ms is not a
-multiple of 2.2 ms. We use **5 substeps × 2.2 ms = 11.0 ms** (90.9 Hz), the
-only integer reading. 1% off; matters only for delay bookkeeping.
+    w_ci = (w_max - w_min) * sqrt(k*u^2 + (1 - k_l)*u) + w_min
 
-### A7. Smoothness-loss action scale — 🟡
-`L_smooth = 0.002 * E[||mu_t - mu_{t-1}||^2]`, where the paper's actions are
-`u in [0,1]`. DreamerV3's `bounded_normal` head produces a tanh mean in
-`[-1,1]`, so the same coefficient is effectively **4× stronger** in our
-implementation. Left at the paper's `0.002` for now — see `imag_loss` in
-`patches/informed_dreamer.patch`. If the policy comes out sluggish, this is the
-first knob to touch.
+but Table II lists only `k = 0.50`. `k_l = k` is forced, not guessed: at
+`u = 1` the motor must reach `w_max`, which needs the root to be exactly 1, so
+`k + 1 - k_l = 1`. Any other value overshoots or undershoots the parameter that
+is named for the maximum. Ferede's public implementation agrees.
+
+### A6. Control period — ✅ RESOLVED (was 🟡)
+The paper gives RK4 "with a timestep of 2.2 ms" *and* a 90 Hz control frequency
+set by the camera, *and* a rate penalty that divides by `f_c = 90 Hz`. Those
+cannot all hold: five substeps of 2.2 ms is 11.0 ms, i.e. 90.909 Hz.
+
+90 Hz over five substeps is 2.2222 ms, so the printed 2.2 is the rounded
+figure. We now derive the substep from the control frequency:
+
+    CONTROL_FREQ = 90.0; SUBSTEPS = 5; DT_INNER = 1 / (90 * 5)
+
+Taking 2.2 literally, as we did before, ran the simulator 1% fast -- 172 ms of
+drift over a 17 s flight -- and left the reward's `f_c` disagreeing with the
+integrator.
+
+### A7. Smoothness-loss action scale — 🟢 (downgraded from 🟡)
+`L_smooth = 0.002 * E[||mu_t - mu_{t-1}||^2]` applied to "the mean of the
+policy". The paper's actions are `u in [0,1]`, while DreamerV3's
+`bounded_normal` head has its mean in `[-1,1]` and `NormalizeAction` maps it
+onto the env's `[0,1]`. Since `u = (a+1)/2`, a penalty on `a` is 4x one on `u`.
+
+We apply it to `a`, the head's own mean, which is what "the mean of the policy"
+denotes in this codebase -- and SkyDreamer builds on this same codebase at this
+same commit, with the same wrapper, so their mean lives in `[-1,1]` too.
+Matching them is the point, so `0.002` on `a` it is.
+
+Verified active rather than assumed: `train/actsmooth` runs 1e-4 -> 0.21 over
+the 17M-step run, contributing ~4e-4 to a policy loss of order 1e-2.
 
 ### A8. GateNet multi-scale head numbering — 🟡
 Appendix A's figure numbers the heads `outc0` at the **bottleneck** and `outc4`
@@ -169,23 +209,38 @@ plan "potentially enables generalization to arbitrary tracks" and never
 demonstrates it. `./run.sh --video --track big` and
 `scripts/evaluate.py --track big` fly a small-track policy on it zero-shot.
 
-### B2b. No termination for a diverging simulation — 🔴 (we had to add one)
-The moment equation includes gyroscopic coupling (`J_x q r` and friends) that
-is **quadratic in the body rates**, and the model carries **no rotational
-damping term at all**. So a policy that spins the drone up drives a positive
-feedback loop: 100 rad/s already produces 8900 rad/s^2, and RK4 at 2.2 ms
-eventually reaches NaN. DreamerV3 asserts on non-finite observations, so the
-run dies -- ours did, at 12k steps.
+### B2b. No termination for a diverging simulation — 🔴 (we add one; justified)
+The paper terminates on exactly two conditions, gate collision and ground
+collision, both with a final reward of zero. There is no rate condition.
 
-The paper's only termination conditions are gate collision and ground
-collision; neither catches this. Either they never hit it, or they have a
-guard they do not mention.
+We add one: `track.diverged`, at 50 rad/s on any axis. It is load-bearing --
+without it a real run died at 12.5k steps on a NaN body rate.
 
-**Our default:** terminate when `max|Omega| > 50 rad/s` or the state goes
-non-finite, with the usual zero terminal reward. 50 rad/s is far outside
-anything physical -- the rate penalty clips at `||Omega||_1 = 17`, a real
-inverted loop is about 10 rad/s, and the flight controller's gyro saturates
-well below 50 -- so this cannot cut off legitimate flight.
+**Why the paper's two conditions cannot cover it.** The moment equation has no
+rotational damping at all; its only rate-dependent terms are the gyroscopic
+products `J_x q r` and friends, which are quadratic and *destabilising*. So
+`dOmega/dt ~ J Omega^2` is a finite-time blow-up, and the time to infinity from
+`Omega_0` is about `1/(J Omega_0)`:
+
+| from | blow-up in |
+|---|---|
+| 17 rad/s (the rate penalty's clip) | 65 ms |
+| 50 rad/s (our guard) | 22 ms |
+| 100 rad/s | 11 ms |
+
+A tumbling drone at 4 m needs roughly 900 ms to fall to the 0.5 m ground-
+collision ceiling. The blow-up is forty times faster, so the ground condition
+cannot catch it first and the episode reaches NaN while still airborne.
+
+**The handling matches the paper exactly** -- terminate, final reward zero, move
+on -- so the deviation is the existence of the condition, not its semantics.
+Terminating is also the right thing on its own terms: there is nothing to
+recover from past that point, and letting it run would poison the replay buffer
+with divergent states.
+
+**What is still unexplained** is why the paper's policy never reaches those
+rates and ours does 69% of the time. That is a question about the plant and the
+policy, not about the guard, which only reports the failure.
 
 ### B3. Sensor noise on `Omega_hat` and `omega_hat` — 🟡
 The paper is explicit that the privileged information carries *ground-truth*

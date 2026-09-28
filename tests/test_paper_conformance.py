@@ -200,8 +200,13 @@ def test_table_two_verbatim():
 
 def test_rk4_timestep():
     """"discretized using fourth-order Runge-Kutta integration with a timestep
-    of 2.2 ms"."""
-    assert DT_INNER == 2.2e-3
+    of 2.2 ms" -- but also a 90 Hz control frequency set by the camera, and a
+    rate penalty that divides by f_c = 90 Hz.  Those disagree: five substeps of
+    2.2 ms is 11.0 ms, i.e. 90.909 Hz.  90 Hz over five substeps is 2.2222 ms,
+    so the printed 2.2 is rounded.  Derive the substep from 90 Hz, which keeps
+    the simulator and the reward on the same clock."""
+    assert DT_INNER == pytest.approx(2.2e-3, abs=5e-5), "still the printed 2.2 ms to 2 s.f."
+    assert CONTROL_DT == pytest.approx(1.0 / 90.0, rel=1e-12), "exactly the control period"
     assert SUBSTEPS * DT_INNER == pytest.approx(CONTROL_DT)
 
 
