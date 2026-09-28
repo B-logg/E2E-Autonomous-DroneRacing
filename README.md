@@ -105,6 +105,29 @@ Other modes:
 | `./run.sh --big` | the 35M-step big-track preset (needs gate coordinates first) |
 | `./run.sh --video` | render the newest run flying: GIF + paper-style figures |
 | `./run.sh --video --big` | fly it zero-shot on the Figure 9 track it never trained on |
+
+### Evaluating a run that is still training
+
+`./run.sh` only scores the policy once, at the end. Waiting 60 hours to find
+out whether a change worked is a poor trade, so evaluation lives in its own
+script and can be pointed at a mid-training checkpoint:
+
+| command | what it does |
+|---|---|
+| `./run_test.sh` | score **and** render the newest checkpoint, both tracks |
+| `./run_test.sh --no-video` | numbers only, much faster |
+| `./run_test.sh --watch 3600` | repeat every hour, accumulating a curve |
+| `./run_test.sh --history` | print the curve so far |
+
+Safe to run alongside training. It copies the checkpoint before reading it --
+the trainer keeps only one and deletes the old one as soon as it writes a new
+one -- and writes to `<run>/eval/step_<N>/`, never into the training run's own
+files. It does share the GPU, so training slows for the few minutes it takes.
+
+    step                           big                 inverted_loop
+              success  gates  diverged      success  gates  diverged
+ 5,004,288     0.0%   1.02       61%     0.0%   1.31       58%
+ 8,012,544     0.0%   0.98       55%     0.0%   1.44       52%
 | `./run.sh --seed 1` | any extra flag is forwarded to `scripts/train.py` |
 
 Override paths with `SKYDREAMER_LOGDIR=/data/logs ./run.sh`.
