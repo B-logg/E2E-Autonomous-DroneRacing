@@ -266,16 +266,32 @@ learned controller acquires the stability margin a designed one gets for free.
 
 **Default (ours):**
 
-    GYRO_NOISE_RANGE = (0.0, 0.10)   # rad/s, sigma drawn per episode
+    GYRO_NOISE_RANGE = (0.1, 0.5)    # rad/s, sigma drawn per episode
     RPM_NOISE_FRAC   = 0.01          # of w_max
 
-Magnitudes: on a 5in racer the gyro is dominated by airframe vibration, not the
-MEMS floor -- an ICM-42688-class part contributes ~0.05 deg/s over a 45 Hz band,
-while post-filter vibration runs 1-10 deg/s RMS and depends on prop balance,
-frame stiffness and IMU mounting. That is a per-airframe quantity, so the sigma
-is **drawn per episode**, exactly as Table III randomizes everything else that
-varies between drones. The range includes zero, so the paper-literal setting
-stays inside the training distribution instead of off the end of it.
+**The range is deliberately larger than a real gyro**, and it is worth being
+explicit about why. On a 5in racer the gyro is dominated by airframe vibration,
+not the MEMS floor -- an ICM-42688-class part contributes ~0.05 deg/s over a
+45 Hz band, while post-filter vibration runs 1-10 deg/s RMS. Our range is
+5.7-29 deg/s, several times that.
+
+Realism is the wrong constraint here. The simulator is the ground truth for a
+simulation-only reproduction, and Table III already randomizes the dynamics by
++-30% not because real drones vary that much but to force robustness. Noise is
+the same kind of knob. And the numbers leave no middle ground: at the measured
+policy gain, sigma has to reach about 0.5 rad/s before the spurious rate it
+injects is comparable to the disturbance Table III already applies (35% of it),
+which is where it starts to make high gain actually fly worse. A realistic
+0.1 rad/s reaches 7%.
+
+The lower bound is **0.1, not 0**. The architecture identifies episode-specific
+parameters for a living -- that is what `info_dyn` decoding is -- so with zero
+in range the policy could infer a quiet episode and revert to the high gain
+that fails. Every episode now carries some.
+
+Which direction this errs matters for the roadmap: a policy trained on a
+noisier sensor than it will meet is conservative, not fragile. Set
+`EnvConfig(gyro_noise_range=(0, 0))` for the paper-literal setting.
 
 RPM is fixed rather than randomized: bidirectional DShot telemetry quantises
 and jitters at roughly 1-2% of the reading, which is a property of the protocol.

@@ -567,7 +567,12 @@ def test_architecture_is_stock_dreamerv3(cfg):
     assert d["policy_dist_cont"] == "bounded_normal"   # Gaussian actor
     # `packbits` is storage only -- the encoder is handed the same full
     # resolution either way (test_bit_packing_is_lossless_and_matches_the_agent).
-    assert set(sd) <= {"informed", "packbits", "imag_loss", "imag_length"}, sd
+    # `report_gradnorms` only adds metrics; it touches no weight and no loss.
+    assert set(sd) <= {
+        "informed", "packbits", "imag_loss", "imag_length", "report_gradnorms"
+    }, sd
+    assert sd["imag_loss"]["actsmooth"] == 0.002, "the paper's lambda_smooth"
+    assert sd["imag_length"] == 16, "II-G: rollouts run 16 steps (0.18 s)"
 
 
 @dv3

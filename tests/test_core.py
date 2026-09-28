@@ -596,9 +596,14 @@ def test_gyro_noise_level_is_drawn_per_airframe():
     lo, hi = GYRO_NOISE_RANGE
     assert sig.min() >= lo and sig.max() <= hi
     assert sig.std() > 0.2 * (hi - lo), "not actually varying between episodes"
-    # The range includes zero, so the paper-literal noiseless case stays inside
-    # the training distribution rather than being off the end of it.
-    assert lo == 0.0
+    # The lower bound is deliberately above zero.  This architecture identifies
+    # episode-specific parameters for a living, so with zero in range the policy
+    # could infer a quiet episode and revert to the high gain that fails.
+    assert lo > 0.0, "every episode must carry some noise"
+    # And the top has to be large enough to matter: at the measured policy gain
+    # the spurious rate it injects only becomes comparable to Table III's own
+    # disturbance around 0.5 rad/s.
+    assert hi >= 0.4, "too small to affect the learned gain"
     # Held for the episode, not redrawn per step.
     st, _ = reset(jax.random.key(0), cfg)
     first = float(st.gyro_sigma)

@@ -71,7 +71,7 @@ MAX_STEPS = 2000
 # everything else for -- so the sigma is drawn per episode rather than fixed,
 # and the range includes zero so the paper-literal setting stays inside the
 # training distribution.
-GYRO_NOISE_RANGE = (0.0, 0.10)  # rad/s (0 - 5.7 deg/s), sigma drawn per episode
+GYRO_NOISE_RANGE = (0.1, 0.5)  # rad/s (5.7 - 29 deg/s), sigma drawn per episode
 # Bidirectional DShot RPM telemetry quantises and jitters at roughly 1-2% of
 # the reading.  Fixed rather than randomized: it is a property of the protocol,
 # not of the airframe.

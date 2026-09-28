@@ -1,5 +1,5 @@
 diff --git a/dreamerv3/agent.py b/dreamerv3/agent.py
-index 0cada34..dd678ca 100644
+index 0cada34..5110062 100644
 --- a/dreamerv3/agent.py
 +++ b/dreamerv3/agent.py
 @@ -36,8 +36,31 @@ class Agent(embodied.jax.Agent):
@@ -115,7 +115,7 @@ index 0cada34..dd678ca 100644
      slowreg=1.0,
  ):
    losses = {}
-@@ -412,6 +479,24 @@ def imag_loss(
+@@ -412,6 +479,32 @@ def imag_loss(
    ents = {k: v.entropy()[:, :-1] for k, v in policy.items()}
    policy_loss = sg(weight[:, :-1]) * -(
        logpi * sg(adv_normed) + actent * sum(ents.values()))
@@ -135,13 +135,21 @@ index 0cada34..dd678ca 100644
 +        'actsmooth requires a continuous (Normal) policy head; got '
 +        f'{[type(getattr(v, "output", v)).__name__ for v in policy.values()]}')
 +    smooth = sum(jnp.square(m[:, 1:] - m[:, :-1]).sum(-1) for m in means)
++    # Magnitudes of the two halves, so the weight can be judged from data
++    # instead of argued about.  `report_gradnorms` cannot answer this: it
++    # iterates loss_scales, and the smoothness term is folded inside `policy`,
++    # so gradnorm/policy reports the sum.  Compare absolute means, not signed
++    # ones -- the return term is a difference that averages near zero while
++    # both of its halves are large.
++    metrics['policy_return_absmean'] = jnp.abs(policy_loss).mean()
++    metrics['actsmooth_absmean'] = jnp.abs(actsmooth * smooth).mean()
 +    policy_loss = policy_loss + actsmooth * smooth
 +    metrics['actsmooth'] = smooth.mean()
    losses['policy'] = policy_loss
  
    voffset, vscale = valnorm(ret, update)
 diff --git a/dreamerv3/configs.yaml b/dreamerv3/configs.yaml
-index 786b67e..0cf3c13 100644
+index 786b67e..5dfae70 100644
 --- a/dreamerv3/configs.yaml
 +++ b/dreamerv3/configs.yaml
 @@ -35,6 +35,7 @@ defaults:
@@ -181,7 +189,7 @@ index 786b67e..0cf3c13 100644
      repl_loss: {slowtar: False, lam: 0.95, slowreg: 1.0}
      slowvalue: {rate: 0.02, every: 1}
      retnorm: {impl: perc, rate: 0.01, limit: 1.0, perclo: 5.0, perchi: 95.0, debias: False}
-@@ -195,6 +200,43 @@ loconav:
+@@ -195,6 +200,45 @@ loconav:
    env.loconav.repeat: 1
    run.train_ratio: 256
  
@@ -198,6 +206,7 @@ index 786b67e..0cf3c13 100644
 +  agent:
 +    informed: True
 +    packbits: mask
++    report_gradnorms: True
 +    imag_loss: {slowtar: True, actsmooth: 0.002}
 +    imag_length: 16
 +  run: {steps: 17e6, train_ratio: 128, envs: 16}
@@ -214,6 +223,7 @@ index 786b67e..0cf3c13 100644
 +  agent:
 +    informed: True
 +    packbits: mask
++    report_gradnorms: True
 +    imag_loss: {slowtar: True, actsmooth: 0.002}
 +    imag_length: 16
 +    enc.simple.symlog: False
