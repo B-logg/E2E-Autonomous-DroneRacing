@@ -224,7 +224,12 @@ fi
 # --------------------------------------------------------------------------
 log "Dependencies"
 # --------------------------------------------------------------------------
-if [ ! -f "${VENV}/.deps-ok" ]; then
+# Stamped with a version, not just touched.  An existing checkout already has
+# `.deps-ok` from an earlier setup, so adding a package to the list below would
+# otherwise never install on the machine that needs it most -- the one already
+# mid-project.  Bump DEPS_VERSION whenever this list changes.
+DEPS_VERSION=2   # 2: added matplotlib/pillow for run_test.sh
+if [ "$(cat "${VENV}/.deps-ok" 2>/dev/null)" != "${DEPS_VERSION}" ]; then
   if command -v nvidia-smi >/dev/null 2>&1; then
     "${PIP[@]}" "jax[cuda12]==0.4.33"
   else
@@ -240,7 +245,7 @@ if [ ! -f "${VENV}/.deps-ok" ]; then
   # using -- resolving matplotlib could pull numpy out from under the trainer.
   "${PIP[@]}" matplotlib pillow
   "${PIP[@]}" -e "${ROOT}"
-  touch "${VENV}/.deps-ok"
+  printf '%s' "${DEPS_VERSION}" > "${VENV}/.deps-ok"
 fi
 "${PY}" -c "import jax; print('jax', jax.__version__, jax.devices())"
 
