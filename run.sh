@@ -244,7 +244,10 @@ fi
 # output writes it out as one mp4 per episode.  Our 64x64 mask matches, so a
 # long run quietly fills the disk with videos of segmentation masks.  Keep the
 # jsonl outputs (metrics.jsonl / scores.jsonl are all we read) and drop scope.
-LOG_ARGS=(--logger.outputs jsonl)
+LOG_ARGS=(--logger.outputs jsonl
+          # Default filter hides epstats; add the env's own diagnostics so the
+          # failure mode is visible during the run, not just at the eval after.
+          --logger.filter 'score|length|fps|ratio|train/loss/|train/rand/|epstats/log/')
 
 # `run.envs` is DreamerV3's, not the paper's (it never states a worker count),
 # so it is free to match the machine.  Each worker is a spawned process running

@@ -175,6 +175,11 @@ class SkyDreamer:
             "info_meas_rpm": vec(4),
             "info_flight_plan": vec(T.FLIGHT_PLAN_DIM),
         }
+        # `log/*` never reaches the agent -- embodied strips it in the driver
+        # and again in the replay buffer -- but the spaces still have to
+        # declare it, and run/train.py aggregates it per episode.
+        out.update({f"log/{k}": el.Space(np.float32) for k in (
+            "diverged", "hit_gate", "hit_ground", "rate_l1", "speed")})
         out.update(
             reward=el.Space(np.float32),
             is_first=el.Space(bool),

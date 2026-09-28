@@ -47,7 +47,9 @@ def test_observation_is_mask_rates_rpm_only():
     II-H adds explicitly: "provided as input to SkyDreamer alongside the other
     observations o_t"."""
     _, obs = reset(jax.random.key(0), EnvConfig(track=T.inverted_loop()))
-    assert {k for k in obs if not k.startswith("info_")} == {
+    # `log/*` is neither o_t nor i_t -- embodied strips it before the agent and
+    # before the replay buffer, so it is outside the POMDP.
+    assert {k for k in obs if not k.startswith(("info_", "log/"))} == {
         "mask",
         "rates",
         "rpm",

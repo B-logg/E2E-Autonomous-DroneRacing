@@ -314,6 +314,17 @@ def observe(state: EnvState, cfg: EnvConfig) -> dict:
         "info_meas_rates": omega_meas,
         "info_meas_rpm": rpm_norm,
         "info_flight_plan": fp,
+        # --- diagnostics only.  embodied strips `log/*` before the agent sees
+        # it (core/driver.py) and before it reaches the replay buffer
+        # (core/replay.py); run/train.py aggregates it per episode instead.  So
+        # these are free: they change nothing about the model, and they turn a
+        # 60-hour run from blind into one where the failure mode is visible
+        # while it happens rather than only at the evaluation afterwards.
+        "log/diverged": (state.term_cause == 3).astype(jnp.float32),
+        "log/hit_gate": (state.term_cause == 1).astype(jnp.float32),
+        "log/hit_ground": (state.term_cause == 2).astype(jnp.float32),
+        "log/rate_l1": jnp.sum(jnp.abs(state.s.omega_b)).astype(jnp.float32),
+        "log/speed": jnp.linalg.norm(state.s.v).astype(jnp.float32),
     }
 
 

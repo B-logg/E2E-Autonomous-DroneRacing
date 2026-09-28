@@ -126,10 +126,15 @@ def _agent_obs(obs: dict) -> dict:
     `(byte > 0.5) * 255` turns every packed byte holding a single gate pixel
     into 0xFF, i.e. eight lit pixels in a row.  The policy then flies on a
     grossly dilated image and crashes on a track it was trained to fly.
+
+    `log/*` is dropped for the same reason embodied's driver drops it: it is
+    diagnostics, the agent asserts it never arrives, and driving the env
+    directly bypasses the driver that would have removed it.
     """
     return {
         k: (v.astype(np.uint8) if k == "mask" else v.astype(np.float32))
         for k, v in obs.items()
+        if not k.startswith("log/")
     }
 
 

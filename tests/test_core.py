@@ -219,7 +219,9 @@ def test_rolling_shutter_is_identity_at_zero_rate():
 def test_observation_split_matches_the_informed_pomdp():
     cfg = EnvConfig(track=T.inverted_loop())
     _, obs = reset(jax.random.key(0), cfg)
-    o = {k for k in obs if not k.startswith("info_")}
+    # `log/*` is neither o_t nor i_t: embodied strips it before the agent and
+    # before the replay buffer, so it is outside the POMDP entirely.
+    o = {k for k in obs if not k.startswith(("info_", "log/"))}
     i = {k for k in obs if k.startswith("info_")}
     assert o == {"mask", "rates", "rpm", "flight_plan"}
     # i_t = {o_t, o_t^+} \ {X}: the image must NOT be a decoder target
@@ -525,6 +527,38 @@ def test_chase_view_renders_the_simulated_world():
     # the frame -- that is the whole point of the viewpoint.
     assert uv is not None
     assert 0 <= uv[0] < 64 and 0 <= uv[1] < 64, uv
+
+
+def test_log_keys_are_diagnostics_the_agent_never_sees():
+    """A 60-hour run should not be blind. embodied treats `log/*` as
+    diagnostics: the driver strips it before the agent (core/driver.py), the
+    replay buffer strips it again (core/replay.py), and run/train.py aggregates
+    it per episode. So these cost nothing and make the failure mode visible
+    while it happens instead of only at the evaluation afterwards."""
+    from skydreamer.embodied_env import SkyDreamer
+
+    env = SkyDreamer("inverted_loop", max_steps=50)
+    obs = env.step({"action": np.zeros(4, np.float32), "reset": True})
+    keys = {k for k in obs if k.startswith("log/")}
+    assert keys == {
+        "log/diverged", "log/hit_gate", "log/hit_ground", "log/rate_l1", "log/speed"
+    }
+    for k in keys:
+        v = np.asarray(obs[k])
+        # run/train.py asserts ndim == 0 on every log key it aggregates.
+        assert v.ndim == 0 and v.dtype == np.float32, (k, v.shape, v.dtype)
+    assert keys <= set(env.obs_space), "declared spaces and real output disagree"
+
+    # They must not reach the model: the informed split would otherwise make
+    # them decoder targets and encoder inputs.
+    from skydreamer.env import PACK_MASK  # noqa: F401  (import guards the path)
+
+    driver_src = (pathlib.Path(__file__).resolve().parents[1] / "third_party" /
+                  "dreamerv3" / "embodied" / "core" / "driver.py")
+    if driver_src.exists():
+        assert "startswith('log/')" in driver_src.read_text(), (
+            "embodied no longer strips log/ keys; they would reach the agent"
+        )
 
 
 def test_measured_and_true_rates_are_different_signals():

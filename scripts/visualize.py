@@ -58,7 +58,10 @@ def fly(agent, cfg, seed, laps):
         is_first, crashed = True, False
 
         for t in range(cfg.max_steps):
-            o = {k: np.asarray(v)[None] for k, v in obs.items()}
+            # log/* is diagnostics; the agent asserts it never arrives, and
+            # driving the env directly skips the driver that strips it.
+            o = {k: np.asarray(v)[None] for k, v in obs.items()
+                 if not k.startswith("log/")}
             o["mask"] = o["mask"].astype(np.uint8)
             o = {k: (v if v.dtype == np.uint8 else v.astype(np.float32)) for k, v in o.items()}
             o.update(
