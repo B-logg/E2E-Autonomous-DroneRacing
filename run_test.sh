@@ -167,11 +167,19 @@ with hist.open("a") as f:
 PY
   # Keep every result; keep only the newest few of the copied checkpoints,
   # which are 126 MB each and only needed to re-run an old evaluation.
-  ls -d "${EVAL_ROOT}"/step_*/ 2>/dev/null | sort | head -n -"${KEEP}" | while read -r d; do
-    [ -d "${d}ckpt" ] || continue
-    rm -rf "${d}ckpt"
-    printf '  pruned checkpoint copy from %s\n' "$(basename "${d}")"
-  done
+  # In Python rather than `head -n -N`, which is a GNU extension that BSD head
+  # rejects outright -- and under `set -e` that failure took the whole script
+  # down after a completely successful evaluation.
+  "${PY}" - "${EVAL_ROOT}" "${KEEP}" <<'PY'
+import pathlib, shutil, sys
+root, keep = pathlib.Path(sys.argv[1]), int(sys.argv[2])
+snaps = sorted(p for p in root.glob("step_*") if p.is_dir())
+for d in snaps[:-keep] if keep else snaps:
+    ckpt = d / "ckpt"
+    if ckpt.is_dir():
+        shutil.rmtree(ckpt)
+        print(f"  pruned checkpoint copy from {d.name}")
+PY
 
   print_history
   log "Done  ${SNAP}"
