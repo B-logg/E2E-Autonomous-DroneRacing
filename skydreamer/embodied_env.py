@@ -41,7 +41,11 @@ import numpy as np
 
 from . import track as T
 from .env import EnvConfig, reset, step
-from .params import NOMINAL
+from .params import (
+    BIG_TRACK_W_MAX_DISTURBANCE,
+    BIG_TRACK_W_MAX_RESAMPLE_EVERY,
+    NOMINAL,
+)
 
 TRACKS = {
     "inverted_loop": T.inverted_loop,
@@ -57,6 +61,15 @@ TRACK_T_G = {
     "inverted_loop": None,  # Table III default, 0.8 m
     "ladder_inverted_loop": 0.3,
     "big": 0.5,             # III-D uses t_g = 0.5 for the big track
+}
+
+# III-D, big track only: "introduce disturbances of +-300 rad/s to w_max,
+# randomly resampled every 10 timesteps, to account for imperfect actuator
+# response modeling".
+TRACK_W_MAX_DISTURBANCE = {
+    "inverted_loop": 0.0,
+    "ladder_inverted_loop": 0.0,
+    "big": BIG_TRACK_W_MAX_DISTURBANCE,
 }
 
 
@@ -111,6 +124,8 @@ class SkyDreamer:
                 max_steps=self._max_steps,
                 image_size=self._size,
                 t_g=TRACK_T_G[self._task],
+                w_max_disturbance=TRACK_W_MAX_DISTURBANCE[self._task],
+                w_max_resample_every=BIG_TRACK_W_MAX_RESAMPLE_EVERY,
             )
             self._rng = jax.random.key(self._seed)
         self._device_ctx = (lambda: jax.default_device(device)) if device else (

@@ -527,6 +527,79 @@ def test_chase_view_renders_the_simulated_world():
     assert 0 <= uv[0] < 64 and 0 <= uv[1] < 64, uv
 
 
+def test_measured_and_true_rates_are_different_signals():
+    """The paper carries Omega-hat and omega-hat in the observation and Omega
+    and omega in the privileged information, and says outright that the latter
+    "represent the ground-truth rates, not the measured ones".  Decoding both
+    only means something if they differ.
+
+    At zero noise they are the same array, and the 17M-step run showed it:
+    info_rates and info_meas_rates agreed to two decimals throughout, so half
+    the decoder was reconstructing the other half."""
+    cfg = EnvConfig(track=T.inverted_loop())
+    st, obs = reset(jax.random.key(0), cfg)
+    for meas, true in (("rates", "info_rates"), ("rpm", "info_rpm")):
+        assert not np.allclose(np.asarray(obs[meas]), np.asarray(obs[true])), (
+            f"obs['{meas}'] is identical to obs['{true}']"
+        )
+
+    # Still exactly reproducible with the paper-literal setting.
+    quiet = EnvConfig(track=T.inverted_loop(), gyro_noise_range=(0.0, 0.0), rpm_noise_frac=0.0)
+    st, obs = reset(jax.random.key(0), quiet)
+    for meas, true in (("rates", "info_rates"), ("rpm", "info_rpm")):
+        assert np.allclose(np.asarray(obs[meas]), np.asarray(obs[true]))
+
+
+def test_gyro_noise_level_is_drawn_per_airframe():
+    """Vibration, not the MEMS floor, dominates gyro noise on a racing quad, and
+    it varies with prop balance, frame stiffness and IMU mounting.  That is a
+    per-airframe quantity, so it is randomized per episode exactly as Table III
+    randomizes everything else that varies between drones."""
+    from skydreamer.env import GYRO_NOISE_RANGE
+
+    cfg = EnvConfig(track=T.inverted_loop())
+    sig = np.array([float(reset(jax.random.key(s), cfg)[0].gyro_sigma) for s in range(200)])
+    lo, hi = GYRO_NOISE_RANGE
+    assert sig.min() >= lo and sig.max() <= hi
+    assert sig.std() > 0.2 * (hi - lo), "not actually varying between episodes"
+    # The range includes zero, so the paper-literal noiseless case stays inside
+    # the training distribution rather than being off the end of it.
+    assert lo == 0.0
+    # Held for the episode, not redrawn per step.
+    st, _ = reset(jax.random.key(0), cfg)
+    first = float(st.gyro_sigma)
+    for _ in range(20):
+        st, _, _, _, _ = env_step(st, jnp.full((4,), 0.3), cfg)
+    assert float(st.gyro_sigma) == first
+
+
+def test_big_track_gets_the_actuator_disturbance_the_paper_specifies():
+    """III-D: "introduce disturbances of +-300 rad/s to w_max, randomly
+    resampled every 10 timesteps".  The constants existed but were never wired
+    to anything, so the big-track config claimed a setting it did not apply."""
+    from skydreamer.embodied_env import SkyDreamer
+    from skydreamer.params import BIG_TRACK_W_MAX_DISTURBANCE
+
+    assert SkyDreamer("inverted_loop").cfg.w_max_disturbance == 0.0
+    big = SkyDreamer("big").cfg
+    assert big.w_max_disturbance == BIG_TRACK_W_MAX_DISTURBANCE == 300.0
+    assert big.w_max_resample_every == 10
+
+    st, _ = reset(jax.random.key(0), big)
+    seen, step_of = [], []
+    for t in range(40):
+        st, _, _, _, _ = env_step(st, jnp.full((4,), 0.3), big)
+        seen.append(float(st.w_max_offset))
+        step_of.append(int(st.step_count))
+    seen = np.array(seen)
+    assert np.abs(seen).max() <= 300.0
+    changes = np.nonzero(np.diff(seen))[0]
+    assert len(changes) >= 2, "the disturbance never resampled"
+    # Every change lands on a multiple of 10 environment steps.
+    for i in changes:
+        assert (step_of[i + 1] - 1) % 10 == 0, (step_of[i + 1], seen[i], seen[i + 1])
+
+
 def test_env_records_why_the_episode_ended():
     """`done` is one bool, which is all the agent needs and useless for working
     out why a policy fails.  Flying into a gate, mushing into the floor and

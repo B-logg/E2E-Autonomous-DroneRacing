@@ -54,13 +54,28 @@ TRAIN_FRACTION = 0.7
 # Evaluation flights in the paper run 2000 steps (~22 s).
 MAX_STEPS = 2000
 
-# NOT FROM THE PAPER.  The paper distinguishes ground-truth Omega/omega (in the
-# privileged information) from *measured* Omega-hat/omega-hat (in the
-# observation), which implies a sensor noise model, but never specifies one.
-# Default to noiseless so we reproduce the paper's setting as literally as
-# possible; turn these up to study robustness.
-GYRO_NOISE_STD = 0.0  # rad/s
-RPM_NOISE_STD = 0.0  # rad/s
+# NOT FROM THE PAPER -- but the paper insists the two exist separately.  The
+# observation carries Omega-hat and omega-hat, "the body rates measured by the
+# IMU" and "the propeller angular velocities measured by the ESC", while the
+# privileged information carries Omega and omega, which "represent the
+# ground-truth rates, not the measured ones".  Decoding both is only meaningful
+# if they differ; at zero noise they are the same array, and the training log
+# showed exactly that -- info_rates and info_meas_rates agreed to two decimals
+# for 17M steps, so half the decoder was reconstructing the other half.
+#
+# The magnitude is ours.  On a 5in racer the gyro is dominated by airframe
+# vibration, not by the MEMS floor: an ICM-42688-class part contributes about
+# 0.05 deg/s over a 45 Hz band, while post-filter vibration noise runs 1-10
+# deg/s RMS and varies with prop balance, frame stiffness and IMU mounting.
+# That is a per-airframe quantity, which is precisely what Table III randomizes
+# everything else for -- so the sigma is drawn per episode rather than fixed,
+# and the range includes zero so the paper-literal setting stays inside the
+# training distribution.
+GYRO_NOISE_RANGE = (0.0, 0.10)  # rad/s (0 - 5.7 deg/s), sigma drawn per episode
+# Bidirectional DShot RPM telemetry quantises and jitters at roughly 1-2% of
+# the reading.  Fixed rather than randomized: it is a property of the protocol,
+# not of the airframe.
+RPM_NOISE_FRAC = 0.01  # of w_max
 
 # The mask is binary but stored one byte per pixel, and DreamerV3 keeps the
 # replay buffer uncompressed in RAM: 4096 of the 4596 bytes/step carry 4096
@@ -76,8 +91,12 @@ class EnvConfig(NamedTuple):
     max_steps: int = MAX_STEPS
     train_fraction: float = TRAIN_FRACTION
     image_size: int = IMAGE_SIZE
-    gyro_noise: float = GYRO_NOISE_STD
-    rpm_noise: float = RPM_NOISE_STD
+    gyro_noise_range: tuple[float, float] = GYRO_NOISE_RANGE
+    rpm_noise_frac: float = RPM_NOISE_FRAC
+    # Section III-D perturbs w_max by +-300 rad/s, resampled every 10 steps,
+    # "to account for imperfect actuator response modeling".  Big track only.
+    w_max_disturbance: float = 0.0
+    w_max_resample_every: int = 10
     # Table III sets t_g = 0.8 m, but section III-B trains the ladder inverted
     # loop with "a smaller tunnel size t_g = 0.3 m, to further demonstrate
     # SkyDreamer's ability to execute tight maneuvers" -- and that is the run
@@ -96,6 +115,8 @@ class EnvState(NamedTuple):
     eps_a: jax.Array  # (3,) held slow acceleration disturbance
     eps_M_slow: jax.Array  # (3,) held slow moment disturbance
     rs_s: jax.Array  # rolling-shutter strength for this episode
+    gyro_sigma: jax.Array  # this airframe's gyro noise level
+    w_max_offset: jax.Array  # III-D actuator disturbance, held for N steps
     erode: jax.Array  # bool, current erosion level
     plane: jax.Array  # int32, monotone index into the gate planes (wraps per lap)
     plane0: jax.Array  # int32, plane the episode started on
@@ -141,7 +162,7 @@ def _sample_params_mixed(key: jax.Array, use_train: jax.Array) -> DynParams:
 
 
 def reset(key: jax.Array, cfg: EnvConfig) -> tuple[EnvState, dict]:
-    k = jax.random.split(key, 10)
+    k = jax.random.split(key, 12)
     use_train = jax.random.uniform(k[0]) < cfg.train_fraction
     b = _episode_bounds(use_train)
 
@@ -195,6 +216,12 @@ def reset(key: jax.Array, cfg: EnvConfig) -> tuple[EnvState, dict]:
             k[8], minval=augment.ROLLING_SHUTTER_RANGE[0], maxval=augment.ROLLING_SHUTTER_RANGE[1]
         ),
         erode=jax.random.uniform(k[9]) < augment.EROSION_PROB,
+        gyro_sigma=jax.random.uniform(
+            k[10], minval=cfg.gyro_noise_range[0], maxval=cfg.gyro_noise_range[1]
+        ),
+        w_max_offset=jax.random.uniform(
+            k[11], minval=-cfg.w_max_disturbance, maxval=cfg.w_max_disturbance
+        ),
         plane=plane,
         plane0=plane,
         fp_index=start_gate,
@@ -253,8 +280,10 @@ def unpack_mask(packed: jax.Array) -> jax.Array:
 def observe(state: EnvState, cfg: EnvConfig) -> dict:
     k1, k2 = jax.random.split(jax.random.fold_in(state.key, state.step_count), 2)
 
-    omega_meas = state.s.omega_b + cfg.gyro_noise * jax.random.normal(k1, (3,))
-    rpm_meas = state.s.motor + cfg.rpm_noise * jax.random.normal(k2, (4,))
+    omega_meas = state.s.omega_b + state.gyro_sigma * jax.random.normal(k1, (3,))
+    rpm_meas = state.s.motor + (
+        cfg.rpm_noise_frac * NOMINAL["w_max"] * jax.random.normal(k2, (4,))
+    )
     rpm_norm = rpm_meas / NOMINAL["w_max"]
 
     fp = trk.flight_plan(cfg.track, state.fp_index)
@@ -291,7 +320,7 @@ def observe(state: EnvState, cfg: EnvConfig) -> dict:
 def step(state: EnvState, action: jax.Array, cfg: EnvConfig):
     # One key per consumer.  Reusing a key across two draws makes those draws
     # perfectly correlated, which silently couples unrelated randomness.
-    key, *k = jax.random.split(state.key, 9)
+    key, *k = jax.random.split(state.key, 10)
     action = jnp.clip(action, 0.0, 1.0)
 
     # --- action delay: what leaves the policy now executes ACTION_DELAY steps later
@@ -315,7 +344,20 @@ def step(state: EnvState, action: jax.Array, cfg: EnvConfig):
     eps_u = jax.random.uniform(k[5], (4,), minval=-u_amp, maxval=u_amp)
     dist = Disturbance(eps_a=eps_a, eps_M=eps_M, eps_u=eps_u)
 
-    s_next = dyn_step(state.s, u_exec, dist, state.params)
+    # III-D: "introduce disturbances of +-300 rad/s to w_max, randomly
+    # resampled every 10 timesteps, to account for imperfect actuator response
+    # modeling".  Zero amplitude on the small tracks, so this is a no-op there.
+    resample_w = (state.step_count % cfg.w_max_resample_every) == 0
+    w_max_offset = jnp.where(
+        resample_w,
+        jax.random.uniform(
+            k[8], minval=-cfg.w_max_disturbance, maxval=cfg.w_max_disturbance
+        ),
+        state.w_max_offset,
+    )
+    params = state.params._replace(w_max=state.params.w_max + w_max_offset)
+
+    s_next = dyn_step(state.s, u_exec, dist, params)
 
     # --- plane crossing, reward, termination
     target, _, _ = trk.plane_pose(cfg.track, state.plane, state.t_g)
@@ -366,6 +408,7 @@ def step(state: EnvState, action: jax.Array, cfg: EnvConfig):
         eps_a=eps_a,
         eps_M_slow=eps_M_slow,
         erode=augment.resample_erosion(k[7], state.erode),
+        w_max_offset=w_max_offset,
         plane=plane,
         fp_index=fp_index,
         fp_done=fp_done,

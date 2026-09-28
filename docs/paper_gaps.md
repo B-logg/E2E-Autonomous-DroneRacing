@@ -242,12 +242,59 @@ with divergent states.
 rates and ours does 69% of the time. That is a question about the plant and the
 policy, not about the guard, which only reports the failure.
 
-### B3. Sensor noise on `Omega_hat` and `omega_hat` — 🟡
-The paper is explicit that the privileged information carries *ground-truth*
-rates "not the measured ones", which only means something if the measured ones
-are noisy. No noise model is given.
-**Default: zero** (`env.GYRO_NOISE_STD = env.RPM_NOISE_STD = 0.0`) so we
-reproduce the paper as literally as possible. Knobs are in `EnvConfig`.
+### B3. Sensor noise on `Omega_hat` and `omega_hat` — 🔴 (was 🟡; now ON by default)
+The paper carries `Omega_hat`, `omega_hat` in the observation and `Omega`,
+`omega` in the privileged information, and states outright that the latter
+"represent the ground-truth rates, **not the measured ones**". It never gives a
+noise model.
+
+We ran 17M steps with both at zero, and the training log showed what that
+costs: `info_rates` and `info_meas_rates` agreed to two decimal places for the
+entire run, as did `info_rpm` and `info_meas_rpm`. **Half the decoder was
+reconstructing the other half.** The paper's own observation/privileged split
+is degenerate at zero noise, which is strong evidence they did not run it there.
+
+It also matters for control, not just for the decoder. Table III already excites
+the plant hard -- `eps_M` at 90 Hz is +-125 rad/s^2, a +-1.39 rad/s kick every
+step against an operating range of 1-18 rad/s. White disturbance at the control
+frequency cannot be usefully chased: the loop has 11 ms of action delay plus a
+30 ms motor lag, so a correction lands 41 ms late, by which time the
+disturbance has changed sign several times. A **perfect** rate sensor gives the
+policy every reason to try anyway, and nothing to lose by trying. Sensor noise
+is what makes chasing single-step fluctuations cost something, which is how a
+learned controller acquires the stability margin a designed one gets for free.
+
+**Default (ours):**
+
+    GYRO_NOISE_RANGE = (0.0, 0.10)   # rad/s, sigma drawn per episode
+    RPM_NOISE_FRAC   = 0.01          # of w_max
+
+Magnitudes: on a 5in racer the gyro is dominated by airframe vibration, not the
+MEMS floor -- an ICM-42688-class part contributes ~0.05 deg/s over a 45 Hz band,
+while post-filter vibration runs 1-10 deg/s RMS and depends on prop balance,
+frame stiffness and IMU mounting. That is a per-airframe quantity, so the sigma
+is **drawn per episode**, exactly as Table III randomizes everything else that
+varies between drones. The range includes zero, so the paper-literal setting
+stays inside the training distribution instead of off the end of it.
+
+RPM is fixed rather than randomized: bidirectional DShot telemetry quantises
+and jitters at roughly 1-2% of the reading, which is a property of the protocol.
+
+**How we will know:** this is the leading hypothesis for the angular-rate
+runaway that caps our episodes at 1.24 s (see `docs/failure_analysis.md`). If
+training with noise does not change the divergence rate, the hypothesis is dead
+and the next suspect is the track geometry.
+
+**To reproduce the paper literally:** `EnvConfig(gyro_noise_range=(0, 0),
+rpm_noise_frac=0)`.
+
+### B3b. III-D actuator disturbance — was declared but never applied
+Section III-D adds "disturbances of +-300 rad/s to `w_max`, randomly resampled
+every 10 timesteps, to account for imperfect actuator response modeling" for the
+big track. `BIG_TRACK_W_MAX_DISTURBANCE` and `BIG_TRACK_W_MAX_RESAMPLE_EVERY`
+existed in `params.py` and were referenced by nothing, so the big-track config
+claimed a setting it did not apply. Now plumbed through `EnvConfig` and held in
+`EnvState`, zero-amplitude on the small tracks.
 
 ### B4. Flight-plan increment timing during training — 🟡
 "the flight plan index `i` is incremented randomly between the pre- and
@@ -384,10 +431,16 @@ Disk is separate and smaller: chunks are written with `np.savez_compressed`
 `scripts/prune_replay.py` bounds the directory. See
 `SKYDREAMER_REPLAY_DISK_STEPS` in `run.sh`.
 
-### E5. Sensor noise — deliberately left at zero
-The ADR literature is clear that the dominant IMU error on a racing quad is
-**propeller vibration, not sensor noise**, and there is no standard value to
-borrow: it depends on the airframe. Since our goal is to reproduce the paper's
-numbers as literally as possible, `GYRO_NOISE_STD` and `RPM_NOISE_STD` stay at
-0 and the knobs stay exposed (see B3). Set them from our own flight logs once
-the airframe exists, rather than from someone else's drone.
+### E5. Sensor noise — now on, and why that changed
+Previously zero, on the reasoning that reproducing the paper literally beat
+guessing a value. Two things overturned that:
+
+1. At zero noise the paper's own observation/privileged split is **degenerate**
+   -- `info_rates` and `info_meas_rates` are the same array. A paper that
+   decodes both separately was not running at zero.
+2. It is the only unspecified value left that acts directly on the rate loop,
+   and the rate loop is what fails.
+
+See B3 for the values and the reasoning. Set them from our own flight logs once
+the airframe exists; until then they are labelled `[OURS]` and the range
+includes zero.
