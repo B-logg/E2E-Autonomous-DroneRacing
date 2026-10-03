@@ -831,3 +831,35 @@ def test_no_unaudited_sections():
     for section in ("II-B", "II-C", "II-D", "II-E", "II-F", "II-H", "Table III", "III-A"):
         assert section in src, section
     assert len(covered) == 12
+
+
+def test_replay_context_keys_match_the_rssm():
+    """`scripts/collect_demos.py` fills the replay-context keys from the config
+    instead of constructing an Agent to read them, because building one to learn
+    two shapes costs 10.2M parameters and a graph compilation.  That shortcut is
+    only safe while it agrees with the module it is shortcutting."""
+    import sys
+
+    import elements
+    import numpy as np
+    import ruamel.yaml as yaml
+
+    sys.path.insert(0, str(DV3))
+    from dreamerv3 import rssm
+
+    sys.path.insert(0, str(ROOT / "scripts"))
+    from collect_demos import _context_zeros
+
+    cfg = elements.Config(yaml.YAML(typ="safe").load(
+        (DV3 / "dreamerv3" / "configs.yaml").read_text())["defaults"])
+    cfg = cfg.update({"replay_context": 16})
+    got = _context_zeros(cfg, np)
+
+    r = cfg.agent.dyn.rssm
+    want = rssm.RSSM({"action": elements.Space(np.float32, (4,), -1, 1)},
+                     deter=r.deter, stoch=r.stoch, classes=r.classes,
+                     name="probe").entry_space
+    assert set(got) == {f"dyn/{k}" for k in want}, (sorted(got), sorted(want))
+    for k, space in want.items():
+        assert got[f"dyn/{k}"].shape == space.shape, (k, got[f"dyn/{k}"].shape, space.shape)
+        assert got[f"dyn/{k}"].dtype == space.dtype, (k, got[f"dyn/{k}"].dtype, space.dtype)

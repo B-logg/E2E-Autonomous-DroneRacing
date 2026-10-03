@@ -38,33 +38,23 @@ sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "third_party" / "dreamerv3"))
 
 
-def _context_zeros(config, wrapped_env, np):
+def _context_zeros(config, np):
     """Zero-filled values for whatever `replay_context` adds to the agent's
-    expected key set.  Built from a constructed Agent so a config change in
-    `dyn.rssm` cannot silently desynchronise them."""
-    import elements
-    import jax
-    from dreamerv3.agent import Agent
+    expected key set.
 
-    # Constructing an Agent turns on `jax_transfer_guard='disallow'` for the
-    # whole process, and everything after this point is a host-driven rollout
-    # that transfers constantly.  Put it back.
-    guard = jax.config.jax_transfer_guard
-
-    obs = {k: v for k, v in wrapped_env.obs_space.items()
-           if not k.startswith("log/")}
-    act = {k: v for k, v in wrapped_env.act_space.items() if k != "reset"}
-    agent = Agent(obs, act, elements.Config(
-        **config.agent, logdir=str(config.logdir), seed=config.seed,
-        jax=config.jax, batch_size=config.batch_size,
-        batch_length=config.batch_length, replay_context=config.replay_context,
-        report_length=config.report_length, replica=config.replica,
-        replicas=config.replicas))
-    skip = set(obs) | set(act) | {"consec", "stepid"}
-    out = {k: np.zeros(v.shape, v.dtype)
-           for k, v in agent.spaces.items() if k not in skip}
-    jax.config.update("jax_transfer_guard", guard)
-    return out
+    Derived from the config rather than from a constructed Agent.  Building one
+    just to read two shapes initialises 10.2M parameters and compiles the train
+    and report graphs -- minutes of GPU work, and a GPU allocation, for
+    `dyn/deter` and `dyn/stoch`.  `tests/test_paper_conformance.py` asserts this
+    against `rssm.RSSM.entry_space` so the two cannot drift apart.
+    """
+    if not config.replay_context:
+        return {}
+    r = config.agent.dyn.rssm
+    return {
+        "dyn/deter": np.zeros((r.deter,), np.float32),
+        "dyn/stoch": np.zeros((r.stoch, r.classes), np.float32),
+    }
 
 
 def _recorder(cfg, R, gains, args, jnp):
@@ -231,7 +221,7 @@ def main():
     # steps, the RSSM re-converges over those steps without it, and the agent
     # overwrites them the first time it trains on the chunk.  The shapes come
     # from the agent rather than from the config so they cannot drift.
-    extra = _context_zeros(config, driver.envs[0], np)
+    extra = _context_zeros(config, np)
     if extra:
         print(f"  filling replay-context keys with zeros: {sorted(extra)}")
 
