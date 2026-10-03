@@ -149,7 +149,7 @@ index 0cada34..5110062 100644
  
    voffset, vscale = valnorm(ret, update)
 diff --git a/dreamerv3/configs.yaml b/dreamerv3/configs.yaml
-index 786b67e..5dfae70 100644
+index 786b67e..c48281a 100644
 --- a/dreamerv3/configs.yaml
 +++ b/dreamerv3/configs.yaml
 @@ -35,6 +35,7 @@ defaults:
@@ -160,7 +160,18 @@ index 786b67e..5dfae70 100644
  
    replay:
      size: 5e6
-@@ -83,6 +84,10 @@ defaults:
+@@ -57,6 +58,10 @@ defaults:
+     eval_eps: 1
+     report_batches: 1
+     from_checkpoint: ''
++    # Referenced by embodied/run/{train,train_eval,parallel}.py and never
++    # declared, so any run that sets `from_checkpoint` crashes on the attribute.
++    # Needed here to warm-start only the world model: see docs/deviations.md.
++    from_checkpoint_regex: ''
+     episode_timeout: 180
+     actor_addr: 'localhost:{auto}'
+     replay_addr: 'localhost:{auto}'
+@@ -83,6 +88,10 @@ defaults:
      coordinator_address: ''
  
    agent:
@@ -171,7 +182,7 @@ index 786b67e..5dfae70 100644
      loss_scales: {rec: 1.0, rew: 1.0, con: 1.0, dyn: 1.0, rep: 0.1, policy: 1.0, value: 1.0, repval: 0.3}
      opt: {lr: 4e-5, agc: 0.3, eps: 1e-20, beta1: 0.9, beta2: 0.999, momentum: True, wd: 0.0, schedule: const, warmup: 1000, anneal: 0}
      ac_grads: False
-@@ -94,7 +99,7 @@ defaults:
+@@ -94,7 +103,7 @@ defaults:
        simple: {depth: 64, mults: [2, 3, 4, 4], layers: 3, units: 1024, act: silu, norm: rms, winit: trunc_normal_in, symlog: True, outer: False, kernel: 5, strided: False}
      dec:
        typ: simple
@@ -180,7 +191,7 @@ index 786b67e..5dfae70 100644
      rewhead: {layers: 1, units: 1024, act: silu, norm: rms, output: symexp_twohot, outscale: 0.0, winit: trunc_normal_in, bins: 255}
      conhead: {layers: 1, units: 1024, act: silu, norm: rms, output: binary, outscale: 1.0, winit: trunc_normal_in}
      policy: {layers: 3, units: 1024, act: silu, norm: rms, minstd: 0.1, maxstd: 1.0, outscale: 0.01, unimix: 0.01, winit: trunc_normal_in}
-@@ -105,7 +110,7 @@ defaults:
+@@ -105,7 +114,7 @@ defaults:
      imag_length: 15
      horizon: 333
      contdisc: True
@@ -189,7 +200,7 @@ index 786b67e..5dfae70 100644
      repl_loss: {slowtar: False, lam: 0.95, slowreg: 1.0}
      slowvalue: {rate: 0.02, every: 1}
      retnorm: {impl: perc, rate: 0.01, limit: 1.0, perclo: 5.0, perchi: 95.0, debias: False}
-@@ -195,6 +200,45 @@ loconav:
+@@ -195,6 +204,45 @@ loconav:
    env.loconav.repeat: 1
    run.train_ratio: 256
  
@@ -247,3 +258,36 @@ index 10476e8..92a0a22 100644
        'memmaze': lambda task, **kw: from_gym.FromGym(
            f'MemoryMaze-{task}-v0', **kw),
    }[suite]
+diff --git a/embodied/run/train.py b/embodied/run/train.py
+index fc791ec..e2b3e26 100644
+--- a/embodied/run/train.py
++++ b/embodied/run/train.py
+@@ -58,7 +58,14 @@ def train(make_agent, make_replay, make_env, make_stream, make_logger, args):
+   driver = embodied.Driver(fns, parallel=not args.debug)
+   driver.on_step(lambda tran, _: step.increment())
+   driver.on_step(lambda tran, _: policy_fps.step())
+-  driver.on_step(replay.add)
++  # Demonstrations (skydreamer's scripts/collect_demos.py) are produced by a
++  # hand-written controller, not by an agent, so they carry no policy `outs`.
++  # `Replay._assemble_batch` takes its key set from whichever sequence it drew
++  # first, so a buffer holding both shapes fails at random once the two are
++  # mixed.  `finite/*` is written to replay and never read back, so the cheap
++  # way to make them agree is to not store it.
++  driver.on_step(lambda tran, worker: replay.add(
++      {k: v for k, v in tran.items() if not k.startswith('finite/')}, worker))
+   driver.on_step(logfn)
+ 
+   stream_train = iter(agent.stream(make_stream(replay, 'train')))
+@@ -88,6 +95,12 @@ def train(make_agent, make_replay, make_env, make_stream, make_logger, args):
+     elements.checkpoint.load(args.from_checkpoint, dict(
+         agent=bind(agent.load, regex=args.from_checkpoint_regex)))
+   cp.load_or_save()
++  # Pick up replay chunks that are already on disk.  A fresh run has no
++  # checkpoint to restore the replay from, so seeded demonstrations
++  # (skydreamer's scripts/collect_demos.py) would otherwise sit in the
++  # directory unread.  `load` skips chunks it already holds, so this is a no-op
++  # on resume.
++  replay.load()
+ 
+   print('Start training loop')
+   policy = lambda *args: agent.policy(*args, mode='train')

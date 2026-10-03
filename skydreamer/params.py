@@ -158,7 +158,14 @@ class RandomizationConfig(NamedTuple):
     # disturbances
     eps_a_slow: float  # m/s^2, resampled with p = 1/100 per step
     eps_M_slow: float  # rad/s^2, resampled with p = 1/100 per step
-    eps_M_fast: float  # rad/s^2, resampled every step
+    # rad/s^2, resampled every step.  Table III's number is read as degrees
+    # and converted, NOT taken as radians -- the only reinterpretation of a
+    # paper value in this repository.  Taken as rad/s^2 it is 125, which is
+    # 6.7x the drone's entire steady-state yaw authority and makes the
+    # environment unflyable: a hand-written controller with exact knowledge of
+    # the dynamics cannot hold a hover, wandering 25 m RMS against a gate that
+    # is 1.6 m across.  docs/deviations.md has the measurements.
+    eps_M_fast: float
     eps_u_fast: float  # normalized motor command, resampled every step
     # gate geometry used for reward and collision
     d_g: float  # effective gate half-size, m
@@ -182,7 +189,7 @@ TRAIN = RandomizationConfig(
     param_frac=0.30,
     eps_a_slow=3.0,
     eps_M_slow=3.0,
-    eps_M_fast=125.0,
+    eps_M_fast=125.0 * _DEG,   # see docs/deviations.md
     eps_u_fast=0.2,
     d_g=0.8,
     t_g=0.8,
@@ -198,7 +205,7 @@ EVAL = TRAIN._replace(
     param_frac=0.20,
     eps_a_slow=2.0,
     eps_M_slow=2.0,
-    eps_M_fast=100.0,
+    eps_M_fast=100.0 * _DEG,   # see docs/deviations.md
     d_g=1.0,
     init_z_g=(0.7, 1.3),
 )

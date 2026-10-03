@@ -11,6 +11,7 @@ DreamerV3 config assertions are skipped unless third_party/dreamerv3 exists
 (run `./run.sh --setup-only`).
 """
 
+import math
 import pathlib
 
 import jax
@@ -363,12 +364,17 @@ def test_gate_pass_threshold():
 # ==========================================================================
 
 
+# Table III's angular-rate disturbance is read as degrees; see
+# docs/deviations.md for the measurement that forced that reading.
+_DEG_ = math.pi / 180.0
+
+
 @pytest.mark.parametrize(
     "field,train,evalv",
     [
         ("eps_a_slow", 3.0, 2.0),
         ("eps_M_slow", 3.0, 2.0),
-        ("eps_M_fast", 125.0, 100.0),
+        ("eps_M_fast", 125.0 * _DEG_, 100.0 * _DEG_),
         ("eps_u_fast", 0.2, 0.2),
         ("d_g", 0.8, 1.0),
         ("t_g", 0.8, 0.8),

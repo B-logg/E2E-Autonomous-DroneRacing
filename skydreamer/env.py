@@ -120,6 +120,15 @@ class EnvState(NamedTuple):
     erode: jax.Array  # bool, current erosion level
     plane: jax.Array  # int32, monotone index into the gate planes (wraps per lap)
     plane0: jax.Array  # int32, plane the episode started on
+    # True once the drone has been *behind* the current target plane.  A gate
+    # is a window, not a half-space, and `p_plane[0] > 0` alone cannot say so.
+    # On the inverted loop that broke the lap outright: gates 0 and 2 both face
+    # +y with gate 2 behind, so finishing gate 2 at y = +0.4 already satisfies
+    # gate 0's `y > -0.4` and the drone was scored as crossing gate 0's plane
+    # 4.5 m off centre -- an instant gate strike, every lap, for any policy.
+    # It is why no evaluation episode ever passed more than 2 gates and why a
+    # 5-lap success was unreachable by construction.
+    armed: jax.Array  # bool
     fp_index: jax.Array  # int32, flight-plan gate index (lags `plane` randomly)
     fp_done: jax.Array  # bool, whether fp_index already advanced for this gate
     prev_dist: jax.Array  # distance to the current target plane, previous step
@@ -200,7 +209,8 @@ def reset(key: jax.Array, cfg: EnvConfig) -> tuple[EnvState, dict]:
     )
 
     plane = start_gate * trk.PLANES_PER_GATE
-    target, _, _ = trk.plane_pose(cfg.track, plane, b["t_g"])
+    target, target_yaw, _ = trk.plane_pose(cfg.track, plane, b["t_g"])
+    armed0 = (trk.gate_rotation(target_yaw) @ (p_w - target))[0] < 0.0
 
     state = EnvState(
         key=k[5],
@@ -224,6 +234,7 @@ def reset(key: jax.Array, cfg: EnvConfig) -> tuple[EnvState, dict]:
         ),
         plane=plane,
         plane0=plane,
+        armed=armed0,
         fp_index=start_gate,
         fp_done=jnp.array(False),
         prev_dist=jnp.linalg.norm(p_w - target),
@@ -375,7 +386,8 @@ def step(state: EnvState, action: jax.Array, cfg: EnvConfig):
     yaw = cfg.track.yaw[(state.plane // trk.PLANES_PER_GATE) % cfg.track.n_gates]
     p_plane = trk.gate_rotation(yaw) @ (s_next.p - target)
 
-    passed = p_plane[0] > 0.0
+    armed = state.armed | (p_plane[0] < 0.0)
+    passed = armed & (p_plane[0] > 0.0)
     r_gate = jnp.where(passed, trk.gate_reward(p_plane, state.d_g), 0.0)
     hit_gate = passed & trk.gate_collision(p_plane, state.d_g)
 
@@ -410,8 +422,10 @@ def step(state: EnvState, action: jax.Array, cfg: EnvConfig):
     fp_index = (state.fp_index + do_inc.astype(jnp.int32)) % cfg.track.n_gates
     fp_done = (state.fp_done | do_inc) & ~(passed & (sub == 2))
 
-    next_target, _, _ = trk.plane_pose(cfg.track, plane, state.t_g)
+    next_target, next_yaw, _ = trk.plane_pose(cfg.track, plane, state.t_g)
     prev_dist = jnp.where(passed, jnp.linalg.norm(s_next.p - next_target), dist_now)
+    p_next = trk.gate_rotation(next_yaw) @ (s_next.p - next_target)
+    armed = jnp.where(passed, p_next[0] < 0.0, armed)
 
     new = state._replace(
         key=key,
@@ -421,6 +435,7 @@ def step(state: EnvState, action: jax.Array, cfg: EnvConfig):
         erode=augment.resample_erosion(k[7], state.erode),
         w_max_offset=w_max_offset,
         plane=plane,
+        armed=armed,
         fp_index=fp_index,
         fp_done=fp_done,
         prev_dist=prev_dist,

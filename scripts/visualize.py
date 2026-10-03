@@ -41,8 +41,13 @@ INK, MUTED = "#1a1a1a", "#8a8a8a"
 TRUTH, DECODED = "#1a1a1a", "#2d7dd2"
 
 
-def fly(agent, cfg, seed, laps):
-    """One episode, recording everything needed to draw it."""
+def fly(agent, cfg, seed, laps, expert=None):
+    """One episode, recording everything needed to draw it.
+
+    `expert` is the demonstration controller (docs/deviations.md section 2).
+    It cannot be wrapped behind the agent interface: it reads the *true* state
+    and the episode's true coefficients, which is the whole point of it, while
+    `agent.policy` only ever sees `o_t`.  So it gets a branch instead."""
     import jax
     import jax.numpy as jnp
 
@@ -52,7 +57,17 @@ def fly(agent, cfg, seed, laps):
 
     with jax.transfer_guard("allow"):
         st, obs = reset(jax.random.key(seed), cfg)
-        carry = agent.init_policy(1)
+        if expert is not None:
+            from skydreamer import expert as _ex
+            from skydreamer import expert_path as _ep
+            from skydreamer.params import NOMINAL as _NOM
+            _r = _ep.reference(cfg.track, _NOM, margin=0.35,
+                               v_cap=expert["v_nom"] * 1.4, iters=1, omega_max=1e9)
+            eref = {k: jnp.asarray(_r[k], jnp.float32)
+                    for k in ("p", "tangent", "v")}
+            eref["ds"] = float(_r["ds"])
+            ecarry = _ex.track_init(eref, st.s.p)
+        carry = None if expert is not None else agent.init_policy(1)
         target = laps * cfg.track.n_gates
         rec = {k: [] for k in ("p", "q", "v", "mask", "axis", "decoded", "gates", "speed")}
         is_first, crashed = True, False
@@ -67,9 +82,16 @@ def fly(agent, cfg, seed, laps):
             o.update(
                 reward=np.zeros(1, np.float32), is_first=np.array([is_first]),
                 is_last=np.zeros(1, bool), is_terminal=np.zeros(1, bool))
-            carry, act, outs = agent.policy(carry, o, mode="eval")
+            if expert is not None:
+                from skydreamer import expert as _ex
+                ecarry, uj = _ex.control(
+                    ecarry, st.s, st.params, eref, expert["v_nom"],
+                    expert["lookahead"], expert["alt_floor"], expert["gains"])
+                u, outs = np.asarray(uj, np.float32), {}
+            else:
+                carry, act, outs = agent.policy(carry, o, mode="eval")
+                u = np.clip((np.asarray(act["action"], np.float32)[0] + 1.0) / 2.0, 0.0, 1.0)
             is_first = False
-            u = np.clip((np.asarray(act["action"], np.float32)[0] + 1.0) / 2.0, 0.0, 1.0)
 
             rec["mask"].append(np.asarray(unpack_mask(obs["mask"])))
             rec["p"].append(np.asarray(st.s.p))
@@ -173,8 +195,8 @@ def chase_view(p, q, track, res=CHASE_RES):
     return img, uv
 
 
-def _draw_chase(ax, ep, i, track):
-    img, uv = chase_view(ep["p"][i], ep["q"][i], track)
+def _draw_chase(ax, ep, i, track, res=CHASE_RES):
+    img, uv = chase_view(ep["p"][i], ep["q"][i], track, res=res)
     ax.imshow(img, interpolation="nearest")
     if uv is not None and 0 <= uv[0] < img.shape[1] and 0 <= uv[1] < img.shape[0]:
         ax.plot(uv[0], uv[1], "o", ms=9, color=TRUTH,
@@ -262,7 +284,7 @@ def _draw_gates(ax_top, ax_side, segs):
         ax_side.plot([y, y], [alt - o / 2, alt + o / 2], **style)
 
 
-def render(ep, track, out_stem, stride, fps):
+def render(ep, track, out_stem, stride, fps, chase_res=CHASE_RES):
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
@@ -294,8 +316,15 @@ def render(ep, track, out_stem, stride, fps):
         (0.0, max(alt.max(), 4.5) + 0.5),
     )
 
+    # Subsample the trail that is redrawn every frame.  It grows with `i`, so
+    # drawing every simulated step makes the whole render quadratic in episode
+    # length -- a 5-lap flight is 3000+ steps and spends minutes on trail
+    # segments thinner than a pixel.  `TRAIL_MAX` segments is indistinguishable.
+    TRAIL_MAX = 400
+
     frames = []
     for i in range(0, len(p), stride):
+        ts = max(1, (i + 1) // TRAIL_MAX)
         fig = plt.figure(figsize=(15.0, 7.4))
         fig.patch.set_facecolor(GROUND)
         axm = fig.add_subplot(2, 3, 1)
@@ -311,18 +340,18 @@ def render(ep, track, out_stem, stride, fps):
         for sp in axm.spines.values():
             sp.set_color("#dddddd")
 
-        _draw_chase(axc, ep, i, track)
+        _draw_chase(axc, ep, i, track, chase_res)
 
         # third person: gates, the trail so far, and the drone with its camera axis
         _setup3d(ax3, bounds3d)
         _draw_gates3d(ax3, rings)
         if i > 1:
-            seg = np.stack([xs[: i + 1], ys[: i + 1], alt[: i + 1]], -1)
+            seg = np.stack([xs[: i + 1: ts], ys[: i + 1: ts], alt[: i + 1: ts]], -1)
             pts = seg.reshape(-1, 1, 3)
             lc3 = Line3DCollection(
                 np.concatenate([pts[:-1], pts[1:]], axis=1),
                 cmap=cmap, norm=plt.Normalize(0, vmax), linewidth=1.8)
-            lc3.set_array(speed[: i + 1])
+            lc3.set_array(speed[: i + 1: ts])
             ax3.add_collection3d(lc3)
         a = axis[i]
         ax3.plot([xs[i]], [ys[i]], [alt[i]], "o", ms=7,
@@ -331,8 +360,8 @@ def render(ep, track, out_stem, stride, fps):
                  [alt[i], alt[i] - a[2]], color=INK, lw=1.4)
 
         for ax, (h, v), lims, labels, title in (
-            (axt, (ys[: i + 1], xs[: i + 1]), (xlim, ylim), ("Y [m]", "X [m]"), "top-down"),
-            (axs_, (ys[: i + 1], alt[: i + 1]), (xlim, zlim), ("Y [m]", "altitude [m]"), "side"),
+            (axt, (ys[: i + 1: ts], xs[: i + 1: ts]), (xlim, ylim), ("Y [m]", "X [m]"), "top-down"),
+            (axs_, (ys[: i + 1: ts], alt[: i + 1: ts]), (xlim, zlim), ("Y [m]", "altitude [m]"), "side"),
         ):
             _setup(ax, *labels, title)
             ax.set_xlim(*lims[0]); ax.set_ylim(*lims[1]); ax.set_aspect("equal")
@@ -341,7 +370,7 @@ def render(ep, track, out_stem, stride, fps):
                 lc = LineCollection(
                     np.concatenate([pts[:-1], pts[1:]], axis=1),
                     cmap=cmap, norm=plt.Normalize(0, vmax), linewidth=2)
-                lc.set_array(speed[: i + 1])
+                lc.set_array(speed[: i + 1: ts])
                 ax.add_collection(lc)
         _draw_gates(axt, axs_, segs)
 
@@ -453,11 +482,21 @@ def still(ep, track, out_png):
 
 def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--logdir", required=True, type=pathlib.Path)
+    ap.add_argument("--logdir", type=pathlib.Path,
+                    help="a training run to draw.  Not needed with --expert.")
+    ap.add_argument("--expert", action="store_true",
+                    help="draw the demonstration controller instead of a learned "
+                         "policy.  Needs no checkpoint -- it reads the true state.")
+    ap.add_argument("--v-nom", type=float, default=2.0, help="--expert commanded speed, m/s")
+    ap.add_argument("--lookahead", type=float, default=0.8, help="--expert carrot distance, m")
+    ap.add_argument("--alt-floor", type=float, default=1.8, help="--expert altitude floor, m")
     ap.add_argument("--episodes", type=int, default=3)
     ap.add_argument("--laps", type=int, default=2)
     ap.add_argument("--seed", type=int, default=20_000)
     ap.add_argument("--stride", type=int, default=3, help="render every Nth sim step")
+    ap.add_argument("--chase-res", type=int, default=CHASE_RES,
+                    help="chase-camera resolution, px.  The ray trace is the cost of a "
+                         "GIF, and it is quadratic in this; 128 is fine for a contact sheet.")
     ap.add_argument("--fps", type=int, default=30)
     ap.add_argument("--out", type=pathlib.Path, default=None)
     ap.add_argument(
@@ -466,27 +505,43 @@ def main() -> int:
              "for a zero-shot test of the paper's flight-plan generalisation claim")
     args = ap.parse_args()
 
-    logdir = args.logdir.expanduser()
-    if not (logdir / "config.yaml").exists():
-        sys.exit(f"no config.yaml in {logdir}")
-    out = args.out or (logdir / "video")
-    out.mkdir(parents=True, exist_ok=True)
-
-    import ruamel.yaml as yaml
-
-    task = yaml.YAML(typ="safe").load((logdir / "config.yaml").read_text())["task"]
-    track_name = args.track or task.split("_", 1)[1]
-    if args.track:
-        out = args.out or (logdir / f"video_{args.track}")
+    if args.expert:
+        track_name = args.track or "inverted_loop"
+        out = args.out or pathlib.Path(f"expert_video_{track_name}")
         out.mkdir(parents=True, exist_ok=True)
-        print(f"zero-shot: policy trained on {task.split('_', 1)[1]}, flying {track_name}")
+        agent = None
+    else:
+        if args.logdir is None:
+            sys.exit("--logdir is required unless --expert is given")
+        logdir = args.logdir.expanduser()
+        if not (logdir / "config.yaml").exists():
+            sys.exit(f"no config.yaml in {logdir}")
+        out = args.out or (logdir / "video")
+        out.mkdir(parents=True, exist_ok=True)
 
-    from evaluate import build_agent
+        import ruamel.yaml as yaml
+
+        task = yaml.YAML(typ="safe").load((logdir / "config.yaml").read_text())["task"]
+        track_name = args.track or task.split("_", 1)[1]
+        if args.track:
+            out = args.out or (logdir / f"video_{args.track}")
+            out.mkdir(parents=True, exist_ok=True)
+            print(f"zero-shot: policy trained on {task.split('_', 1)[1]}, flying {track_name}")
 
     from skydreamer.embodied_env import SkyDreamer
 
     env = SkyDreamer(track_name, max_steps=args.laps * 1200, seed=args.seed)
-    agent, _ = build_agent(logdir, env)
+    if not args.expert:
+        from evaluate import build_agent
+        agent, _ = build_agent(logdir, env)
+
+    expert_cfg = None
+    if args.expert:
+        from skydreamer import expert as _ex
+        expert_cfg = dict(v_nom=args.v_nom, lookahead=args.lookahead,
+                          alt_floor=args.alt_floor,
+                          gains=_ex.Gains(k_vel=3.5, max_tilt_deg=35.0))
+        print(f"demonstration controller: v_nom={args.v_nom} m/s on {track_name}")
 
     # Pull the track onto the host once, here, rather than letting the drawing
     # code call np.asarray on device arrays.  DreamerV3 sets
@@ -502,10 +557,10 @@ def main() -> int:
     print(f"flying {args.episodes} episodes on {track_name}, {args.laps} laps each", flush=True)
 
     for i in range(args.episodes):
-        ep = fly(agent, env.cfg, args.seed + i, args.laps)
+        ep = fly(agent, env.cfg, args.seed + i, args.laps, expert=expert_cfg)
         stem = out / f"flight_{i}"
         png = still(ep, track, out / f"figure_{i}.png")
-        gif = render(ep, track, stem, args.stride, args.fps)
+        gif = render(ep, track, stem, args.stride, args.fps, args.chase_res)
         print(f"  episode {i}: {ep['gates'][-1]} gates, {ep['duration']:.2f} s, "
               f"peak {ep['speed'].max():.1f} m/s"
               f"{' (crashed)' if ep['crashed'] else ''}", flush=True)

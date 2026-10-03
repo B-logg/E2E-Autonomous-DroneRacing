@@ -10,3 +10,9 @@ __pycache__/
 .pytest_cache/
 paper.html
 ferede_rl/
+
+# Demonstrations and their renders: regenerate with `./run.sh --collect-demos`
+# (about four minutes of CPU) rather than carrying 280 MB of npz in the repo.
+demos/
+expert_demo/
+expert_video_*/

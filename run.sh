@@ -5,6 +5,17 @@
 #   ./run.sh --smoke      ~5 min   verify the whole pipeline works. DO THIS FIRST.
 #   ./run.sh              ~30-50 h the paper's run: 17M steps, 3 phases, then eval
 #   ./run.sh --resume              continue the newest run after an interruption
+#
+#   ./run.sh --collect-demos  ~4 min
+#       Fly the demonstration controller and write ~800 successful episodes to
+#       ./demos.  Needs no checkpoint and no previous run.  CPU only.
+#
+#   ./run.sh --warm-start <ckpt> --demos <dir>
+#       Start a fresh 3-phase run that keeps a previous run's *world model* and
+#       throws its actor-critic away, with demonstrations already in the replay
+#       buffer.  <ckpt> is a `ckpt` directory from an earlier run; <dir> is what
+#       scripts/collect_demos.py wrote (its `replay/` is copied in).  Both are
+#       optional and independent.  See docs/deviations.md.
 #   ./run.sh --setup-only ~10 min  install everything, train nothing
 #   ./run.sh --eval-only  ~10 min  re-evaluate the newest run (100 eps x 5 laps)
 #   ./run.sh --video      ~5 min   render the newest run flying (gif + figures)
@@ -37,9 +48,24 @@ LOGROOT="${SKYDREAMER_LOGDIR:-${ROOT}/logdir}"
 MODE="full"
 PRESET="small"
 EXTRA=()
+WARM_CKPT=""
+DEMOS="${SKYDREAMER_DEMOS:-}"
+DEMO_SCAN="${SKYDREAMER_DEMO_SCAN:-6000}"
+DEMO_KEEP="${SKYDREAMER_DEMO_KEEP:-800}"
+NEXT=""
 for arg in "$@"; do
+  if [ -n "${NEXT}" ]; then
+    case "${NEXT}" in
+      ckpt)  WARM_CKPT="${arg}" ;;
+      demos) DEMOS="${arg}" ;;
+    esac
+    NEXT=""; continue
+  fi
   case "${arg}" in
     --smoke)      MODE="smoke" ;;
+    --collect-demos) MODE="demos" ;;
+    --warm-start) NEXT="ckpt" ;;
+    --demos)      NEXT="demos" ;;
     --resume)     MODE="resume" ;;
     --setup-only) MODE="setup" ;;
     --eval-only)  MODE="eval" ;;
@@ -181,9 +207,23 @@ command -v uv >/dev/null 2>&1 || die "uv install failed; install Python ${PY_VER
 # venv to the interpreter it was built from and refuses with "externally
 # managed", which says nothing about the actual cause.  Rebuild instead: a venv
 # is disposable, and .deps-ok goes with it so the packages are reinstalled.
-if [ ! -x "${VENV}/bin/python" ] || [ ! -f "${VENV}/pyvenv.cfg" ]; then
+# A venv built from the wrong interpreter is the third way this can be broken,
+# and the least legible: everything up to the first `uv pip install` succeeds,
+# and then the resolver reports that jaxlib has no wheel for the ABI tag -- an
+# error that names the Python version but never says where it came from.
+VENV_OK=1
+[ -x "${VENV}/bin/python" ] && [ -f "${VENV}/pyvenv.cfg" ] || VENV_OK=0
+if [ "${VENV_OK}" = "1" ]; then
+  HAVE=$("${VENV}/bin/python" -c 'import sys; print("%d.%d" % sys.version_info[:2])' 2>/dev/null || echo "?")
+  [ "${HAVE}" = "${PY_VERSION}" ] || { VENV_OK=0; WRONG_PY="${HAVE}"; }
+fi
+if [ "${VENV_OK}" = "0" ]; then
   if [ -e "${VENV}" ]; then
-    log "Rebuilding the incomplete virtual environment at ${VENV}"
+    if [ -n "${WRONG_PY:-}" ]; then
+      log "Rebuilding ${VENV}: it is Python ${WRONG_PY}, this needs ${PY_VERSION}"
+    else
+      log "Rebuilding the incomplete virtual environment at ${VENV}"
+    fi
     rm -rf "${VENV}"
   fi
   uv venv --python "${PY_VERSION}" "${VENV}"
@@ -369,6 +409,21 @@ if [ "${MODE}" = "smoke" ]; then
 fi
 
 # --------------------------------------------------------------------------
+if [ "${MODE}" = "demos" ]; then
+  log "Collecting demonstrations"
+  echo "The controller completes a 2000-step episode about one time in six, so"
+  echo "this screens thousands of seeds and keeps the ones that survive."
+  OUT="${EXTRA_OUT:-${ROOT}/demos}"
+  "${PY}" "${ROOT}/scripts/collect_demos.py" --preset "${PRESET}" --out "${OUT}" \
+      --episodes "${DEMO_SCAN}" --max-keep "${DEMO_KEEP}" \
+      "${EXTRA[@]+"${EXTRA[@]}"}"
+  log "Done"
+  echo "  demonstrations  ${OUT}/replay"
+  echo "  seed them with  ./run.sh --demos ${OUT}"
+  exit 0
+fi
+
+# --------------------------------------------------------------------------
 # The paper's run, section III-A: three phases, 17M steps total.
 #   phase 1   0 ->  8M   defaults
 #   phase 2   8M -> 13M  batch_length 64 -> 256
@@ -387,6 +442,45 @@ else
   echo "Detach this (tmux/screen/nohup) -- and if the instance dies, ./run.sh --resume"
 fi
 mkdir -p "${RUN_DIR}"
+
+# --- demonstrations.  Copied in before training starts, so the replay
+# directory already holds them when the run opens it.  `prune_replay.py` reads
+# the manifest and refuses to delete them, and the patched train.py calls
+# `replay.load()` even on a fresh run, which it otherwise would not.
+if [ -n "${DEMOS}" ]; then
+  SRC="${DEMOS%/}"
+  [ -d "${SRC}/replay" ] && SRC="${SRC}/replay"
+  [ -d "${SRC}" ] || die "no demonstrations at ${DEMOS}"
+  N=$(ls "${SRC}"/*.npz 2>/dev/null | wc -l | tr -d ' ')
+  [ "${N}" -gt 0 ] || die "${SRC} holds no replay chunks"
+  log "Seeding ${N} demonstration chunks into the replay buffer"
+  mkdir -p "${RUN_DIR}/replay"
+  cp "${SRC}"/*.npz "${RUN_DIR}/replay/"
+  if [ -f "${SRC}/.demo-chunks" ]; then
+    cp "${SRC}/.demo-chunks" "${RUN_DIR}/replay/"
+  else
+    (cd "${SRC}" && ls *.npz) > "${RUN_DIR}/replay/.demo-chunks"
+  fi
+  echo "  $(du -sh "${RUN_DIR}/replay" | cut -f1), protected from pruning"
+fi
+
+# --- warm start.  Loads only the world model from an earlier run; the
+# actor-critic and every optimizer moment stay at their fresh initialisation,
+# which is the point -- the old actor-critic had converged on a local optimum
+# whose value the old critic had learned correctly (docs/deviations.md).
+if [ -n "${WARM_CKPT}" ]; then
+  [ -d "${WARM_CKPT}" ] || die "no checkpoint directory at ${WARM_CKPT}"
+  # `elements.checkpoint.load` wants the directory that holds `agent.pkl`, not
+  # the `ckpt` directory above it, so follow `latest` when it is there.
+  if [ -f "${WARM_CKPT}/latest" ]; then
+    WARM_CKPT="${WARM_CKPT}/$(cat "${WARM_CKPT}/latest")"
+  fi
+  [ -f "${WARM_CKPT}/agent.pkl" ] || die "no agent.pkl under ${WARM_CKPT}"
+  log "Warm-starting the world model from ${WARM_CKPT}"
+  echo "  loading dyn/enc/dec/rew/con; actor, critic and Adam state start fresh"
+  EXTRA+=(--run.from_checkpoint "${WARM_CKPT}")
+  EXTRA+=(--run.from_checkpoint_regex '^(dyn|enc|dec|rew|con)/')
+fi
 
 # DreamerV3 never deletes replay chunks; without this the disk fills mid-run.
 "${PY}" "${ROOT}/scripts/prune_replay.py" --logdir "${RUN_DIR}" \
