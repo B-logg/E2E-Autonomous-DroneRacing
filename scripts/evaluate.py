@@ -88,7 +88,72 @@ def build_agent(logdir: pathlib.Path, env):
     return agent, cfg
 
 
-def rollout(agent, cfg_env, episodes: int, laps: int, seed: int, chunk: int = 64):
+# Which distribution the evaluation episodes are drawn from.
+#
+# `paper`   Table III's *evaluation* column, every episode from the start gate.
+#           This is what Table IV describes, and it is the default.
+# `strict`  The same, but with the gate window forced to the *training* value
+#           (d_g = 0.8 m instead of 1.0 m).  Our track's inner gate is 1.5 m, so
+#           its true half-width is 0.75 m and 1.0 m is more lenient than the real
+#           gate; this is the number to watch before trusting a policy outdoors.
+# `mixed`   `EnvConfig`'s own default, train_fraction = 0.7: 70% of episodes come
+#           from the *training* column and start in front of a random gate.  It is
+#           the schedule section III-A describes for *training*, and until this
+#           flag existed it was what we evaluated on by accident -- which is why
+#           early evaluations read ~20 points below the paper's protocol.  Kept as
+#           a stress test, because it contains start states the paper never
+#           evaluates (standing still in mid-air in front of the virtual gate).
+PROTOCOLS = {
+    "paper": dict(train_fraction=0.0, d_g=None),
+    "strict": dict(train_fraction=0.0, d_g=0.8),
+    "mixed": dict(train_fraction=0.7, d_g=None),
+    # `physical` Paper start and Table III evaluation column, but the sim's own gate
+    #           window is switched off (d_g = 3 m) and the flight is scored after the
+    #           fact against our real gate: every airframe point (props, arms, camera)
+    #           that crosses a real gate's plane must do so inside the 1.5 m opening,
+    #           the virtual gate needs the centre within 1 m (the paper's d_g = 1.0),
+    #           and MonoRace's rule applies -- crossing the plane outside the opening
+    #           is a crash.  The policy never observes d_g, so the flight itself is
+    #           unchanged; only the verdict differs.  Combine with `--hw` to also
+    #           give the simulator our gate frame, camera offset and thrust-to-weight.
+    "physical": dict(train_fraction=0.0, d_g=3.0, physical=True),
+}
+
+# `--hw`: the simulator moved to our drone and gate (skydreamer/hardware.py).
+HW_FULL = dict(twr=4.3, gate_outer=2.1, cam_offset=0.10, fov=(114.6, 92.15))
+
+
+def apply_hardware(cfg_env, twr=None, gate_outer=None, cam_offset=None, fov=None):
+    """Return `cfg_env` with our gate frame and camera offset, and scale the
+    simulator's nominal thrust-to-weight to `twr` (process-global: NOMINAL is read
+    when the env is traced, so call this before the first step)."""
+    import jax.numpy as jnp
+
+    from skydreamer import hardware
+    if twr is not None:
+        hardware.apply_dynamics(twr)
+    if gate_outer is not None:
+        import jax
+
+        tr = cfg_env.track
+        with jax.transfer_guard("allow"):
+            outer = jnp.full(tr.outer.shape, float(gate_outer), tr.outer.dtype)
+        cfg_env = cfg_env._replace(track=tr._replace(outer=outer))
+    if cam_offset is not None:
+        cfg_env = cfg_env._replace(cam_offset=float(cam_offset))
+    if fov is not None:
+        cfg_env = cfg_env._replace(fov=tuple(fov))
+    return cfg_env
+
+
+def protocol_config(cfg_env, name: str):
+    """`(cfg, forced_d_g)` for one of `PROTOCOLS`."""
+    spec = PROTOCOLS[name]
+    return cfg_env._replace(train_fraction=spec["train_fraction"]), spec["d_g"]
+
+
+def rollout(agent, cfg_env, episodes: int, laps: int, seed: int, chunk: int = 64,
+            force_d_g=None, physical: bool = False):
     """Drive the JAX env directly rather than through embodied's driver, so the
     ground-truth `EnvState` stays visible alongside the policy's own beliefs.
 
@@ -103,7 +168,7 @@ def rollout(agent, cfg_env, episodes: int, laps: int, seed: int, chunk: int = 64
     import jax
 
     with jax.transfer_guard("allow"):
-        return _rollout(agent, cfg_env, episodes, laps, seed, chunk)
+        return _rollout(agent, cfg_env, episodes, laps, seed, chunk, force_d_g, physical)
 
 
 # Decode error over the whole flight conflates two different things: how well
@@ -150,7 +215,8 @@ def _hold(mask, frozen, moved):
     )
 
 
-def _rollout(agent, cfg_env, episodes: int, laps: int, seed: int, chunk: int = 64):
+def _rollout(agent, cfg_env, episodes: int, laps: int, seed: int, chunk: int = 64,
+             force_d_g=None, physical: bool = False):
     import jax
     import jax.numpy as jnp
 
@@ -172,7 +238,12 @@ def _rollout(agent, cfg_env, episodes: int, laps: int, seed: int, chunk: int = 6
         b = min(chunk, episodes - done_total)
         with jax.transfer_guard("allow"):
             st, obs = reset_b(jax.random.split(jax.random.key(seed + done_total), b))
+            if force_d_g is not None:
+                st = st._replace(d_g=jnp.full_like(st.d_g, force_d_g))
         carry = agent.init_policy(b)
+        # Thrust-to-weight of each airframe: takeoff deaths track it (docs/deviations.md).
+        with jax.transfer_guard("allow"):
+            twr_b = np.asarray(st.params.k_w * 4 * st.params.w_max ** 2 / 9.81)
 
         alive = np.ones(b, bool)
         finished = np.zeros(b, bool)
@@ -184,6 +255,7 @@ def _rollout(agent, cfg_env, episodes: int, laps: int, seed: int, chunk: int = 6
         amax = np.zeros(b)
         decode_err = {k: [] for k in ("p_w", "v_w")}
         decode_early = {k: [] for k in ("p_w", "v_w")}
+        trace_p, trace_q = [], []
         prev_gates = np.zeros(b, int)
         prev_v = np.zeros((b, 3))
         is_first = np.ones(b, bool)
@@ -242,6 +314,10 @@ def _rollout(agent, cfg_env, episodes: int, laps: int, seed: int, chunk: int = 6
                 d_g = np.asarray(st.d_g)
                 t_g = np.asarray(st.t_g)
 
+            if physical:
+                trace_p.append(p.copy())
+                trace_q.append(np.asarray(st.s.q).copy())
+
             speed = np.linalg.norm(v, axis=-1)
             # Specific force, i.e. what an accelerometer would read: the paper's
             # "6 g" includes the 1 g the drone holds up against gravity.
@@ -269,17 +345,39 @@ def _rollout(agent, cfg_env, episodes: int, laps: int, seed: int, chunk: int = 6
                     margin[i] = min(margin[i], float(d_g[i] - off[i]))
             prev_gates = gates
 
-            finished |= live & (gates >= target_gates)
+            # A strike on the final gate's post plane ticks `gates` to the target in the
+            # very step that terminates the episode; counting it as finished scored a
+            # crash as a completed run.  One episode in a hundred at a 0.8 m window.
+            finished |= live & ~terminated & (gates >= target_gates)
             alive &= ~terminated
             if (finished | ~alive).all():
                 break
 
         with jax.transfer_guard("allow"):
             causes = np.asarray(st.term_cause)
+        phys = [None] * b
+        if physical:
+            from skydreamer import hardware
+
+            tp, tq = np.stack(trace_p, 1), np.stack(trace_q, 1)
+            tr = cfg_env.track
+            gates_def = [(np.asarray(tr.pos[g]), float(tr.yaw[g]), bool(tr.visible[g]))
+                         for g in range(tr.n_gates)]
+            for i in range(b):
+                phys[i] = hardware.check_flight(tp[i], tq[i], gates_def, int(steps[i]),
+                                                CONTROL_DT, opening=float(tr.inner[0]) / 2)
         for i in range(b):
+            sim_ok = bool(finished[i])
+            ok_phys = True if phys[i] is None else phys[i][0]
+            bad = [] if phys[i] is None else [e for e in phys[i][1] if not e[4]]
             records.append(
                 dict(
-                    success=bool(finished[i]),
+                    success=sim_ok and ok_phys,
+                    sim_success=sim_ok,
+                    twr=float(twr_b[i]),
+                    phys_fail=(None if not bad else dict(step=bad[0][0], gate=bad[0][1],
+                                                         off=bad[0][3])),
+                    phys_events=[(e[1], e[2], e[3]) for e in (phys[i][1] if phys[i] else [])],
                     cause=int(causes[i]),
                     gates=int(prev_gates[i]),
                     duration=float(steps[i] * CONTROL_DT),
@@ -381,14 +479,46 @@ def summarize(records, decode: dict, n_gates: int, laps: int):
         diag["min_gate_margin_m_all"] = float(np.min(margins))
     out["diagnostics"] = diag
 
+    # Success and ground deaths by airframe thrust-to-weight.  The takeoff failure the
+    # policy shows is a function of it, so a flat aggregate can hide a weak band.
+    if all("twr" in r for r in records):
+        edges = [0.0, 3.5, 4.5, 5.5, 7.0, 99.0]
+        tw = np.array([r["twr"] for r in records])
+        rows = []
+        for lo, hi in zip(edges[:-1], edges[1:]):
+            sel = [r for r, t in zip(records, tw) if lo <= t < hi]
+            if sel:
+                rows.append(dict(
+                    twr=f"{lo:g}-{hi:g}" if hi < 99 else f">={lo:g}", n=len(sel),
+                    success=float(np.mean([r["success"] for r in sel])),
+                    ground_before_gate1=int(sum(1 for r in sel if r["cause"] == 2 and r["gates"] == 0))))
+        out["by_twr"] = rows
+
+    if any("phys_fail" in r and r.get("phys_events") for r in records):
+        fails = [r for r in records if r["phys_fail"]]
+        # An episode can fail the swept check *and* the sim; attribute by what came first.
+        only_phys = [r for r in fails if r["sim_success"]]
+        real = [e for r in records for e in r["phys_events"] if e[0] != 1]
+        out["physical"] = {
+            "sim_finished_rate": float(np.mean([r["sim_success"] for r in records])),
+            "failed_swept_check": len(fails),
+            "failed_swept_check_but_sim_finished": len(only_phys),
+            "fail_gate_histogram": {int(g): int(sum(1 for r in fails if r["phys_fail"]["gate"] == g))
+                                    for g in sorted({r["phys_fail"]["gate"] for r in fails})},
+            "real_gate_worst_point_offset_m": {
+                q: float(np.percentile([e[2] for e in real], q)) for q in (50, 90, 99)
+            } if real else None,
+        }
+
     if decode:
         out["decode_error"] = decode
     return out
 
 
-def report(name: str, s: dict) -> str:
+def report(name: str, s: dict, protocol: str = "paper") -> str:
     p = PAPER.get(name, {})
-    L = [f"\n=== {name} ===", f"episodes            {s['episodes']}"]
+    L = [f"\n=== {name} ===", f"protocol            {protocol}",
+         f"episodes            {s['episodes']}"]
 
     def row(label, got, want, fmt="{:.2f}"):
         g = fmt.format(got) if got is not None else "n/a"
@@ -402,6 +532,21 @@ def report(name: str, s: dict) -> str:
     row("max accel [g]", s.get("max_accel_g"), p.get("accel"))
     row("mean gate error [m]", s.get("gate_error_m"), None, "{:.3f}")
     row("min gate margin [m]", s.get("min_gate_margin_m"), None, "{:.3f}")
+
+    if s.get("by_twr"):
+        L.append("\n--- by thrust-to-weight of the airframe ---")
+        for r in s["by_twr"]:
+            L.append(f"  TWR {r['twr']:<8} n={r['n']:<4} success {r['success']:.1%}   "
+                     f"ground deaths before gate 1: {r['ground_before_gate1']}")
+    ph = s.get("physical")
+    if ph:
+        L.append(f"{'sim-only success':<20}{ph['sim_finished_rate']:.1%}   (no swept-footprint check)")
+        L.append(f"{'swept-check fails':<20}{ph['failed_swept_check']}   of which sim-clean "
+                 f"{ph['failed_swept_check_but_sim_finished']}   by gate {ph['fail_gate_histogram']}")
+        w = ph["real_gate_worst_point_offset_m"]
+        if w:
+            L.append(f"{'worst point offset':<20}" + "   ".join(f"p{q} {v:.3f}" for q, v in w.items())
+                     + "   (opening half-width 0.75)")
 
     d = s.get("diagnostics")
     if d:
@@ -453,6 +598,18 @@ def main() -> int:
     ap.add_argument("--laps", type=int, default=5)
     ap.add_argument("--seed", type=int, default=10_000)
     ap.add_argument("--out", type=pathlib.Path, default=None)
+    ap.add_argument("--protocol", choices=sorted(PROTOCOLS), default="paper",
+                    help="paper (default): Table III evaluation column from the start gate; "
+                         "strict: paper but with the training gate window 0.8 m; "
+                         "mixed: the 70/30 training mixture (the old accidental default)")
+    ap.add_argument("--hw", action="store_true",
+                    help="simulate our drone and gate: outer 2.1 m, camera 0.10 m forward, "
+                         "thrust-to-weight 4.3 (override each with the flags below)")
+    ap.add_argument("--hw-twr", type=float, default=None,
+                    help="nominal thrust-to-weight (sim paper value 6.07)")
+    ap.add_argument("--hw-gate-outer", type=float, default=None)
+    ap.add_argument("--hw-cam-offset", type=float, default=None)
+    ap.add_argument("--tag", default="", help="suffix for output files")
     args = ap.parse_args()
 
     logdir = args.logdir.expanduser()
@@ -462,25 +619,45 @@ def main() -> int:
     import ruamel.yaml as yaml
 
     task = yaml.YAML(typ="safe").load((logdir / "config.yaml").read_text())["task"]
-    track = args.track or task.split("_", 1)[1]
+    trained_on = task.split("_", 1)[1]
+    track = args.track or trained_on
+    # A run trained on our hardware (`hw_*`) is scored on our hardware: `--track big`
+    # means `hw_big` there, not the paper's drone on the big track.
+    if trained_on.startswith("hw_") and not track.startswith("hw_"):
+        track = "hw_" + track
 
     from skydreamer.embodied_env import SkyDreamer
 
     env = SkyDreamer(track, max_steps=args.laps * 1200, seed=args.seed)
     agent, _ = build_agent(logdir, env)
 
-    print(f"evaluating {track}: {args.episodes} episodes x {args.laps} laps", flush=True)
-    records, decode = rollout(agent, env.cfg, args.episodes, args.laps, args.seed)
+    cfg_env, force_d_g = protocol_config(env.cfg, args.protocol)
+    hw = dict(HW_FULL) if args.hw else dict(twr=None, gate_outer=None, cam_offset=None, fov=None)
+    for k in hw:
+        v = getattr(args, f"hw_{k}", None)
+        if v is not None:
+            hw[k] = v
+    if any(v is not None for v in hw.values()):
+        cfg_env = apply_hardware(cfg_env, **hw)
+        print(f"hardware overrides: {hw}", flush=True)
+    print(f"evaluating {track} [{args.protocol}]: {args.episodes} episodes x {args.laps} laps",
+          flush=True)
+    records, decode = rollout(agent, cfg_env, args.episodes, args.laps, args.seed,
+                              force_d_g=force_d_g, physical=PROTOCOLS[args.protocol].get("physical", False))
     summary = summarize(records, decode, env.cfg.track.n_gates, args.laps)
-    text = report(track, summary)
+    text = report(track, summary, args.protocol)
     print(text)
 
     # Scoring a run on a track it did not train on must not overwrite the
     # training-track result -- `--eval-only` and `--eval-only --big` both land
     # in the same logdir.  Same convention visualize.py uses for `video_big/`.
-    stem = "evaluation" if track == task.split("_", 1)[1] else f"evaluation_{track}"
+    stem = "evaluation" if track == trained_on else f"evaluation_{track}"
+    if args.protocol != "paper":
+        stem += f"_{args.protocol}"
+    stem += args.tag
     out = args.out or (logdir / f"{stem}.json")
-    out.write_text(json.dumps({"track": track, "laps": args.laps, **summary}, indent=2))
+    out.write_text(json.dumps(
+        {"track": track, "protocol": args.protocol, "laps": args.laps, "hardware": hw, **summary}, indent=2))
     (logdir / f"{stem}.txt").write_text(text)
     print(f"\nwrote {out}")
     return 0

@@ -32,6 +32,23 @@ def intrinsics(h: int, w: int) -> tuple[float, float, float, float]:
     return FOCAL_RATIO * w, FOCAL_RATIO * h, 0.5 * w, 0.5 * h
 
 
+def fov_valid(h: int, w: int, fov_deg: tuple[float, float]) -> jax.Array:
+    """(H, W) float32, 1 where a camera of this (horizontal, vertical) field of view
+    has data once its image is remapped onto the nominal intrinsics, 0 outside.
+
+    The nominal K is a ~104.4 degree square.  A camera whose field of view is wider
+    than that in both directions fills it; a narrower one leaves blank borders,
+    which is what the policy would be handed on the real drone.  Ours is 114.6 x
+    92.15 degrees: all columns are valid, the top and bottom ~6 rows are not."""
+    import numpy as np
+
+    fx, fy, cx, cy = intrinsics(h, w)
+    v, u = np.meshgrid(np.arange(h) + 0.5, np.arange(w) + 0.5, indexing="ij")
+    ok = (np.abs((u - cx) / fx) <= np.tan(np.radians(fov_deg[0]) / 2)) & (
+        np.abs((v - cy) / fy) <= np.tan(np.radians(fov_deg[1]) / 2))
+    return jnp.asarray(ok, jnp.float32)
+
+
 @functools.partial(jax.jit, static_argnames=("h", "w"))
 def pixel_rays(h: int, w: int) -> jax.Array:
     """(H, W, 3) unnormalized ray directions in the camera-forward frame

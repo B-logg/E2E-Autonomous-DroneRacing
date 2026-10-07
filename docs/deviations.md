@@ -234,7 +234,46 @@ here has never needed help with.
 
 ---
 
-## 5. Not changed
+## 5. Evaluation protocol — ✅ corrected
+
+**What was wrong**: `evaluate.py` took `EnvConfig`'s default `train_fraction = 0.7`,
+which is section III-A's schedule for *training* episodes (70% from Table III's
+training column, started in front of a random gate). Every evaluation we ran,
+through all of the third training run, was therefore 67% training-column
+episodes. Table IV describes the *evaluation* column flown from the start gate.
+
+**What it cost**, same weights (the 16.99M checkpoint), 200 episodes x 5 laps,
+`scripts/evaluate.py`:
+
+| protocol | success (95% CI) | died within 1 gate | what it is |
+|---|---|---|---|
+| `paper` | **87.5%** (±4.6) | 7% | evaluation column, start gate, `d_g = 1.0` — Table IV |
+| `strict` | 77.5% (±5.8) | 16% | `paper` with the training window `d_g = 0.8` |
+| `mixed` | 56.0% (±6.9) | 27% | the old accidental default |
+
+So the old number understated the policy against the paper's own protocol, by
+about 30 points. Two caveats go the other way:
+
+- `paper` is a nearly in-distribution test: the evaluation column was already 30%
+  of training episodes. Nothing here measures generalisation to another track or
+  to hardware (`big` is 0%).
+- `paper` uses `d_g = 1.0`, but this track's inner gate is 1.5 m, a half-width of
+  0.75 m, so 1.0 is more lenient than the physical gate. `strict` is the number to
+  read before trusting a policy on a real drone.
+
+**What changed**: `evaluate.py --protocol {paper,strict,mixed}`, default `paper`;
+`run_test.sh --protocol` (repeatable) and a history table that labels each row;
+`visualize.py` draws the same distribution. Results for non-default protocols are
+written to `evaluation_<protocol>.{json,txt}`. History rows written before the flag
+existed are shown as `mixed`.
+
+The breakdown of what *remains* — why `strict` and `mixed` lose episodes, and which
+failures training does not shrink — is in the early-failure analysis
+(`scripts/diagnose_start.py`, `scripts/analyse_start.py`).
+
+---
+
+## 6. Not changed
 
 - **StochGAN (Appendix B)** is unimplemented. It needs real flight footage,
   which this project does not have. Recorded in `docs/paper_gaps.md`.
@@ -249,3 +288,13 @@ here has never needed help with.
   and that is the critic's job.
 - **Direct motor control.** CTBR with an inner attitude loop would sidestep the
   stability problem entirely and is explicitly not the goal.
+
+## 7. Our drone and gate (`hw_*` task) -- deliberate, not a reproduction
+
+`./run.sh --hw` trains the same method on our flight-test hardware. Everything is in
+`HW_PROFILE` (`skydreamer/hardware.py`), values and sources in `docs/hardware.md` section 5.
+Changed from the paper: gate frame 2.7 -> 2.1 m, camera 0.10 m forward, camera field of view
+114.6 x 92.15 deg (blank top/bottom rows on the nominal K), nominal thrust-to-weight 6.07 -> 4.3
+(estimate), gate window d_g 0.8/1.0 -> 0.65/0.60, tunnel t_g 0.8 -> 0.40. Track layout, the
+Table III randomisation, the camera tilt (45-55 deg), the reward and the training recipe are
+the paper's. Evaluated on the `physical` protocol, which is ours.

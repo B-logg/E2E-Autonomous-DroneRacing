@@ -140,6 +140,10 @@ def main():
                          "does, so a server that has only just cloned the repo "
                          "can collect demonstrations before its first run.")
     ap.add_argument("--preset", default="small", choices=("small", "big"))
+    ap.add_argument("--hw", action="store_true",
+                    help="our drone and gate (docs/hardware.md): fly the hw_* task, so the "
+                         "demonstrations show 2.1 m gates, the forward camera and our "
+                         "thrust-to-weight")
     ap.add_argument("--out", type=pathlib.Path, default=pathlib.Path("demos"))
     ap.add_argument("--episodes", type=int, default=2000)
     ap.add_argument("--min-gates", type=int, default=5,
@@ -188,6 +192,10 @@ def main():
     args.out.mkdir(parents=True, exist_ok=True)
     # make_replay puts the directory under config.logdir, so point that here.
     config = config.update({"logdir": str(args.out.resolve())})
+    if args.hw and not config.task.split("_", 1)[1].startswith("hw_"):
+        head, tail = config.task.split("_", 1)
+        config = config.update({"task": f"{head}_hw_{tail}"})
+        print(f"hardware profile: task {config.task}")
 
     replay = dv3main.make_replay(config, "replay", mode="train")
     driver = embodied.Driver([lambda: dv3main.make_env(config, 0)], parallel=False)
@@ -202,9 +210,9 @@ def main():
     while hasattr(env, "env"):
         env = env.env
     env._build()   # `_cfg` and `_rng` do not exist until the first build
-    track_name = config.task.split("_", 1)[1]
-    track = {"inverted_loop": trk.inverted_loop, "big": trk.big_track,
-             "ladder_inverted_loop": trk.ladder_inverted_loop}[track_name]()
+    # The env's own track, not a lookup by name: an `hw_*` task has a different
+    # gate frame, and `NOMINAL` (read just below) was rescaled by the same build.
+    track = env.cfg.track
     n_gates = track.n_gates
 
     r = ep.reference(track, NOMINAL, margin=0.35, v_cap=args.v_nom * 1.4,
@@ -280,7 +288,7 @@ def main():
         return jnp.stack([jax.random.split(jax.random.key(int(s)))[1]
                           for s in seeds])
 
-    print(f"track {track_name}, {n_gates} gates/lap, keeping episodes with "
+    print(f"track {config.task.split('_', 1)[1]}, {n_gates} gates/lap, keeping episodes with "
           f">= {args.min_gates} gates")
     fast = _screener(env._cfg, R, gains, args, jnp)
 

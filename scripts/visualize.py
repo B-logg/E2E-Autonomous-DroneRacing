@@ -523,6 +523,8 @@ def main() -> int:
 
         task = yaml.YAML(typ="safe").load((logdir / "config.yaml").read_text())["task"]
         track_name = args.track or task.split("_", 1)[1]
+        if task.split("_", 1)[1].startswith("hw_") and not track_name.startswith("hw_"):
+            track_name = "hw_" + track_name   # a run trained on our hardware flies on it
         if args.track:
             out = args.out or (logdir / f"video_{args.track}")
             out.mkdir(parents=True, exist_ok=True)
@@ -557,7 +559,8 @@ def main() -> int:
     print(f"flying {args.episodes} episodes on {track_name}, {args.laps} laps each", flush=True)
 
     for i in range(args.episodes):
-        ep = fly(agent, env.cfg, args.seed + i, args.laps, expert=expert_cfg)
+        ep = fly(agent, env.cfg._replace(train_fraction=0.0), args.seed + i, args.laps,
+                 expert=expert_cfg)
         stem = out / f"flight_{i}"
         png = still(ep, track, out / f"figure_{i}.png")
         gif = render(ep, track, stem, args.stride, args.fps, args.chase_res)

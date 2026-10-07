@@ -105,6 +105,8 @@ def build() -> dict:
     }
 
     for name in TRACKS:
+        if name.startswith("hw_"):
+            continue   # same layouts on our drone and gate; docs/hardware.md
         tr = TRACKS[name]()
         pos = np.asarray(tr.pos, float)
         yaw = np.degrees(np.asarray(tr.yaw, float))

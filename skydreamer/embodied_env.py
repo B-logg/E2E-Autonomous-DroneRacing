@@ -39,7 +39,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
-from . import track as T
+from . import hardware, track as T
 from .env import EnvConfig, reset, step
 from .params import (
     BIG_TRACK_W_MAX_DISTURBANCE,
@@ -55,6 +55,21 @@ TRACKS = {
     "big": T.big_track,
 }
 
+# `hw_<track>`: the same layout on our drone and gate (skydreamer/hardware.py,
+# docs/hardware.md).  A task name rather than a flag because the name travels --
+# through the config the spawned workers read, into config.yaml, and so into
+# evaluate.py and visualize.py without any of them needing to be told.
+for _name in list(TRACKS):
+    TRACKS[hardware.HW_PREFIX + _name] = TRACKS[_name]
+
+
+def _split_hw(task: str):
+    """`('hw_big')` -> `(True, 'big')`."""
+    if task.startswith(hardware.HW_PREFIX):
+        return True, task[len(hardware.HW_PREFIX):]
+    return False, task
+
+
 # Per-track tunnel size.  Table III's 0.8 m applies unless the paper overrides
 # it: section III-B trains the ladder inverted loop at 0.3 m.
 TRACK_T_G = {
@@ -62,6 +77,7 @@ TRACK_T_G = {
     "ladder_inverted_loop": 0.3,
     "big": 0.5,             # III-D uses t_g = 0.5 for the big track
 }
+TRACK_T_G.update({hardware.HW_PREFIX + k: hardware.HW_PROFILE["t_g"] for k in list(TRACK_T_G)})
 
 # III-D, big track only: "introduce disturbances of +-300 rad/s to w_max,
 # randomly resampled every 10 timesteps, to account for imperfect actuator
@@ -71,6 +87,8 @@ TRACK_W_MAX_DISTURBANCE = {
     "ladder_inverted_loop": 0.0,
     "big": BIG_TRACK_W_MAX_DISTURBANCE,
 }
+TRACK_W_MAX_DISTURBANCE.update(
+    {hardware.HW_PREFIX + k: v for k, v in list(TRACK_W_MAX_DISTURBANCE.items())})
 
 
 def _spaces():
@@ -118,14 +136,27 @@ class SkyDreamer:
         # Construction copies the track and the RNG seed to the device, both of
         # which the process-wide `jax_transfer_guard='disallow'` DreamerV3 sets
         # would otherwise reject.
+        is_hw, _ = _split_hw(self._task)
+        # `NOMINAL` is process-global and read at trace time, so it is set (or
+        # restored) before anything is jitted.  Restoring matters: a test process
+        # that built an `hw_*` env must not leave the paper's env on our thrust.
+        hardware.apply_dynamics(hardware.HW_PROFILE["twr"] if is_hw else None)
         with ctx, jax.transfer_guard("allow"):
+            track = TRACKS[self._task]()
+            extra = {}
+            if is_hw:
+                hw = hardware.HW_PROFILE
+                track = track._replace(outer=jnp.full(track.outer.shape, hw["gate_outer"],
+                                                      track.outer.dtype))
+                extra = dict(cam_offset=hw["cam_offset"], d_g=hw["d_g"], fov=hw["fov"])
             self._cfg = EnvConfig(
-                track=TRACKS[self._task](),
+                track=track,
                 max_steps=self._max_steps,
                 image_size=self._size,
                 t_g=TRACK_T_G[self._task],
                 w_max_disturbance=TRACK_W_MAX_DISTURBANCE[self._task],
                 w_max_resample_every=BIG_TRACK_W_MAX_RESAMPLE_EVERY,
+                **extra,
             )
             self._rng = jax.random.key(self._seed)
         self._device_ctx = (lambda: jax.default_device(device)) if device else (

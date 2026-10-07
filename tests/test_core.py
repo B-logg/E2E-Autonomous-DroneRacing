@@ -804,3 +804,152 @@ def test_big_track_gates_are_reachable_in_sequence():
     gaps = np.linalg.norm(np.diff(np.vstack([pos, pos[:1]]), axis=0), axis=-1)
     assert gaps.min() > 1.0, gaps.min()
     assert gaps.max() < 12.0, gaps.max()
+
+
+def test_evaluation_defaults_to_the_papers_protocol():
+    """`EnvConfig` defaults to `train_fraction = 0.7`, which is how section III-A
+    schedules *training* episodes: 70% from the training column starting in front
+    of a random gate.  `evaluate.py` inherited that by accident, so every number
+    it printed came from a mixture the paper never evaluates on -- 64% success
+    where the paper's own protocol (evaluation column, start gate) gives 86% for
+    the same weights.  The default has to be the paper's, and `mixed` has to
+    still mean what it used to."""
+    import re
+
+    ev = _load_evaluate()
+    assert ev.PROTOCOLS["paper"] == dict(train_fraction=0.0, d_g=None)
+    assert ev.PROTOCOLS["strict"] == dict(train_fraction=0.0, d_g=0.8)
+    assert ev.PROTOCOLS["mixed"]["train_fraction"] == pytest.approx(0.7)
+
+    src = (pathlib.Path(__file__).resolve().parents[1] / "scripts" / "evaluate.py").read_text()
+    assert re.search(r'"--protocol".{0,80}default="paper"', src, re.S)
+
+    keys = jax.random.split(jax.random.key(0), 96)
+    base = EnvConfig(track=T.inverted_loop())
+
+    cfg, forced = ev.protocol_config(base, "paper")
+    assert forced is None
+    st, _ = batched(cfg)[0](keys)
+    assert (np.asarray(st.plane) // 3 == 0).all(), "paper protocol must always start at the start gate"
+    assert np.allclose(np.asarray(st.d_g), 1.0), "Table III's evaluation column has d_g = 1.0"
+
+    cfg, forced = ev.protocol_config(base, "mixed")
+    st, _ = batched(cfg)[0](keys)
+    assert (np.asarray(st.plane) // 3 != 0).any(), "mixed must still start in front of other gates"
+    assert np.isclose(np.asarray(st.d_g), 0.8).any(), "mixed must still draw the training window"
+
+    cfg, forced = ev.protocol_config(base, "strict")
+    assert forced == pytest.approx(0.8)
+    assert cfg.train_fraction == 0.0
+
+
+def test_a_crash_on_the_final_gate_is_not_a_finished_run():
+    """`gates` ticks to the target on the post plane of the last gate, which is
+    also where a strike on it terminates the episode.  `finished` was set from
+    `live` before `terminated` was consulted, so that crash scored as success --
+    one episode in a hundred at a 0.8 m window.  Source check, because the loop
+    needs a trained agent to run."""
+    src = (pathlib.Path(__file__).resolve().parents[1] / "scripts" / "evaluate.py").read_text()
+    assert "finished |= live & ~terminated & (gates >= target_gates)" in src
+    assert src.index("terminated = np.asarray(term) & live") < src.index("finished |= live & ~terminated")
+
+
+def _flight(offset_y, yaw=0.0, n=60, dt=1 / 90):
+    """A level flight along +x through a gate at the origin, `offset_y` m to the side,
+    with the airframe yawed `yaw` rad against the flight direction."""
+    import numpy as np
+
+    x = np.linspace(-1.0, 1.0, n)
+    pos = np.stack([x, np.full(n, offset_y), np.full(n, 0.0)], -1)
+    q = np.tile([np.cos(yaw / 2), 0.0, 0.0, np.sin(yaw / 2)], (n, 1))
+    return pos, q, dt
+
+
+def test_swept_footprint_check_uses_the_whole_airframe():
+    import numpy as np
+
+    from skydreamer.hardware import check_flight
+
+    gates = [(np.zeros(3), 0.0, True)]
+    # Aligned, the X frame reaches 0.088 + 0.0635 = 0.152 m sideways.
+    pos, q, dt = _flight(0.55)
+    assert check_flight(pos, q, gates, len(pos), dt)[0]
+    pos, q, dt = _flight(0.65)
+    assert not check_flight(pos, q, gates, len(pos), dt)[0]
+    # A virtual gate only looks at the centre.
+    assert check_flight(pos, q, [(np.zeros(3), 0.0, False)], len(pos), dt)[0]
+
+
+def test_swept_footprint_check_depends_on_attitude():
+    import numpy as np
+
+    from skydreamer.hardware import check_flight
+
+    gates = [(np.zeros(3), 0.0, True)]
+    # Yawed 45 deg an arm points sideways: 0.125 + 0.0635 = 0.19 m reach.  The same
+    # centre line that clears the opening aligned does not clear it yawed.
+    pos, q, dt = _flight(0.58)
+    assert check_flight(pos, q, gates, len(pos), dt)[0]
+    pos, q, dt = _flight(0.58, yaw=np.pi / 4)
+    assert not check_flight(pos, q, gates, len(pos), dt)[0]
+
+
+def test_hw_task_is_our_drone_and_gate_and_does_not_leak():
+    import jax
+
+    from skydreamer import hardware
+    from skydreamer.embodied_env import SkyDreamer
+    from skydreamer.params import NOMINAL
+
+    hw = SkyDreamer("hw_inverted_loop", max_steps=50, seed=1)
+    cfg = hw.cfg
+    assert abs(float(cfg.track.outer[0]) - hardware.GATE_OUTER) < 1e-5
+    assert abs(float(cfg.track.inner[0]) - hardware.GATE_INNER) < 1e-5
+    assert cfg.cam_offset == hardware.CAM_FORWARD
+    assert cfg.d_g == hardware.HW_PROFILE["d_g"] and cfg.t_g == hardware.HW_PROFILE["t_g"]
+    twr = NOMINAL["k_w"] * 4 * NOMINAL["w_max"] ** 2 / 9.81
+    assert abs(twr - hardware.TWR_CENTRAL) < 1e-6
+    # The window the episode draws is ours, not Table III's (0.8 / 1.0).
+    with jax.transfer_guard("allow"):
+        state, _ = hw._reset(jax.random.key(0))
+    assert min(abs(float(state.d_g) - v) for v in (0.65, 0.60)) < 1e-6 and abs(float(state.t_g) - 0.40) < 1e-6
+
+    # Building the paper's env afterwards in the same process restores the paper's thrust.
+    paper = SkyDreamer("inverted_loop", max_steps=50, seed=1)
+    assert paper.cfg.cam_offset == 0.0 and paper.cfg.d_g is None
+    assert abs(float(paper.cfg.track.outer[0]) - 2.7) < 1e-5
+    assert NOMINAL["k_w"] == hardware.PAPER_K_W
+
+
+def test_forward_camera_moves_the_viewpoint():
+    import jax
+    import jax.numpy as jnp
+    import numpy as np
+
+    from skydreamer.env import _render_augmented
+    from skydreamer.embodied_env import SkyDreamer
+
+    from skydreamer import hardware
+
+    env = SkyDreamer("hw_inverted_loop", max_steps=50, seed=1)
+    try:
+        cfg = env.cfg
+        with jax.transfer_guard("allow"):
+            state, _ = env._reset(jax.random.key(3))
+            a = np.asarray(_render_augmented(state, cfg._replace(cam_offset=0.0)))
+            b = np.asarray(_render_augmented(state, cfg._replace(cam_offset=0.5)))
+    finally:
+        hardware.apply_dynamics(None)   # NOMINAL is process-global
+    assert a.shape == b.shape and not np.array_equal(a, b)
+
+
+def test_hw_camera_field_of_view_blanks_the_rows_it_cannot_see():
+    import numpy as np
+
+    from skydreamer.hardware import CAM_FOV
+    from skydreamer.render import fov_valid
+
+    m = np.asarray(fov_valid(64, 64, CAM_FOV))
+    assert m[:, :].sum(0).min() == 52 and m[6:58].all() and not m[:6].any() and not m[58:].any()
+    # a camera at least as wide as the nominal K in both directions loses nothing
+    assert np.asarray(fov_valid(64, 64, (120.0, 110.0))).all()

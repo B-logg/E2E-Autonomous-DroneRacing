@@ -5,6 +5,13 @@
 #   ./run_test.sh                  score + render the newest checkpoint, both tracks
 #   ./run_test.sh --no-video       numbers only, much faster
 #   ./run_test.sh --track big      one track instead of both
+#   ./run_test.sh --protocol strict   also: paper | strict | mixed | physical (repeatable)
+#                                  default: paper, or physical for a run trained with --hw
+#                                  paper  = Table III evaluation column, start gate (Table IV)
+#                                  strict = paper with the 0.8 m training gate window
+#                                  mixed  = the 70/30 training mixture (the old default)
+#                                  physical = the airframe's whole footprint against our real
+#                                             1.5 m opening (docs/hardware.md); for --hw runs
 #   ./run_test.sh --episodes 50    fewer episodes (default 100, as Table IV)
 #   ./run_test.sh --watch 3600     repeat every hour, building a history
 #   ./run_test.sh --history        print the history so far and exit
@@ -37,6 +44,7 @@ LAPS=5
 WATCH=0
 KEEP=3
 TRACKS=()
+PROTOCOLS=()
 HISTORY_ONLY=0
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -44,6 +52,7 @@ while [ $# -gt 0 ]; do
     --video)     VIDEO=1 ;;
     --track)     TRACKS+=("$2"); shift ;;
     --big)       TRACKS+=("big") ;;
+    --protocol)  PROTOCOLS+=("$2"); shift ;;
     --episodes)  EPISODES="$2"; shift ;;
     --laps)      LAPS="$2"; shift ;;
     --watch)     WATCH="$2"; shift ;;
@@ -79,6 +88,13 @@ export XLA_PYTHON_CLIENT_PREALLOCATE=false
 
 RUN_DIR="$(latest_run || true)"
 [ -n "${RUN_DIR}" ] || die "no run under ${LOGROOT}"
+# A run trained on our hardware (`./run.sh --hw`) has `skydreamer_hw_*` as its task and
+# is scored on the `physical` protocol unless told otherwise.
+if grep -q 'task: skydreamer_hw_' "${RUN_DIR}/config.yaml"; then
+  [ ${#PROTOCOLS[@]} -gt 0 ] || PROTOCOLS=(physical)
+  echo "run trained on our drone and gate -> protocol: ${PROTOCOLS[*]}"
+fi
+[ ${#PROTOCOLS[@]} -gt 0 ] || PROTOCOLS=(paper)
 EVAL_ROOT="${RUN_DIR}/eval"
 HISTORY="${EVAL_ROOT}/history.jsonl"
 
@@ -90,13 +106,17 @@ import json, sys, pathlib
 rows = [json.loads(l) for l in pathlib.Path(sys.argv[1]).read_text().splitlines() if l.strip()]
 if not rows:
     print("  empty"); raise SystemExit
-tracks = sorted({r["track"] for r in rows})
+for r in rows:
+    # Rows written before `--protocol` existed were all the 70/30 mixture.
+    r.setdefault("protocol", "mixed")
+    r["label"] = r["track"] if r["protocol"] == "paper" else f'{r["track"]}/{r["protocol"]}'
+tracks = sorted({r["label"] for r in rows})
 print(f"\n  {'step':>12}  " + "  ".join(f"{t:>28}" for t in tracks))
 print(f"  {'':>12}  " + "  ".join(f"{'success  gates  diverged':>28}" for _ in tracks))
 for step in sorted({r["step"] for r in rows}):
     cells = []
     for t in tracks:
-        m = [r for r in rows if r["step"] == step and r["track"] == t]
+        m = [r for r in rows if r["step"] == step and r["label"] == t]
         if not m:
             cells.append(f"{'-':>28}"); continue
         r = m[-1]
@@ -131,12 +151,14 @@ run_once() {
   fi
 
   for track in "${TRACKS[@]}"; do
-    log "step ${STEP}: scoring ${track} (${EPISODES} episodes x ${LAPS} laps)"
+   for proto in "${PROTOCOLS[@]}"; do
+    log "step ${STEP}: scoring ${track} [${proto}] (${EPISODES} episodes x ${LAPS} laps)"
     "${PY}" "${ROOT}/scripts/evaluate.py" --logdir "${SNAP}" --track "${track}" \
-        --episodes "${EPISODES}" --laps "${LAPS}" || {
-      printf '\033[1;31m  scoring %s failed -- continuing\033[0m\n' "${track}" >&2
+        --episodes "${EPISODES}" --laps "${LAPS}" --protocol "${proto}" || {
+      printf '\033[1;31m  scoring %s [%s] failed -- continuing\033[0m\n' "${track}" "${proto}" >&2
       continue
     }
+   done
     if [ "${VIDEO}" = "1" ]; then
       log "step ${STEP}: rendering ${track}"
       "${PY}" "${ROOT}/scripts/visualize.py" --logdir "${SNAP}" --track "${track}" \
@@ -157,6 +179,7 @@ with hist.open("a") as f:
         f.write(json.dumps({
             "step": step,
             "track": d["track"],
+            "protocol": d.get("protocol", "mixed"),
             "success_rate": d["success_rate"],
             "mean_gates": d["mean_gates_passed"],
             "diverged_frac": term.get("diverged", 0) / total if term else None,

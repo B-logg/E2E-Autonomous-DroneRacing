@@ -25,6 +25,7 @@ from .dynamics import (
     euler_to_quat,
     initial_motor_speeds,
     quat_to_euler,
+    quat_to_matrix,
     step as dyn_step,
 )
 from .params import (
@@ -35,7 +36,7 @@ from .params import (
     sample_extrinsics,
     sample_params,
 )
-from .render import render_mask
+from .render import fov_valid, render_mask
 from .track import Track
 
 IMAGE_SIZE = 64
@@ -102,6 +103,15 @@ class EnvConfig(NamedTuple):
     # SkyDreamer's ability to execute tight maneuvers" -- and that is the run
     # the paper's simulation figures come from.  None = use Table III.
     t_g: float | None = None
+    # Camera position along body x, metres ahead of the centre of mass.  The
+    # paper's camera sits at the CoM; ours is ~0.10 m forward.  0 = paper.
+    cam_offset: float = 0.0
+    # (train, eval) gate window d_g in metres, replacing Table III's (0.8, 1.0).
+    d_g: tuple[float, float] | None = None
+    # Real camera (horizontal, vertical) field of view in degrees.  The policy's
+    # image is always on the nominal ~104 degree square K; a narrower camera leaves
+    # blank borders, applied here after augmentation.  None = fills K (the paper).
+    fov: tuple[float, float] | None = None
 
 
 class EnvState(NamedTuple):
@@ -177,6 +187,8 @@ def reset(key: jax.Array, cfg: EnvConfig) -> tuple[EnvState, dict]:
 
     if cfg.t_g is not None:
         b["t_g"] = jnp.asarray(float(cfg.t_g))
+    if cfg.d_g is not None:
+        b["d_g"] = _mix(cfg.d_g[0], cfg.d_g[1], use_train)
 
     params = _sample_params_mixed(k[1], use_train)
     c_e = sample_extrinsics(k[2], TRAIN)  # identical ranges in both columns
@@ -255,10 +267,16 @@ def reset(key: jax.Array, cfg: EnvConfig) -> tuple[EnvState, dict]:
 
 
 def _render_augmented(state: EnvState, cfg: EnvConfig) -> jax.Array:
+    p_cam = state.s.p
+    if cfg.cam_offset:
+        p_cam = p_cam + quat_to_matrix(state.s.q)[..., :, 0] * cfg.cam_offset
     mask = render_mask(
-        state.s.p, state.s.q, state.c_e, cfg.track, cfg.image_size, cfg.image_size
+        p_cam, state.s.q, state.c_e, cfg.track, cfg.image_size, cfg.image_size
     )
-    return augment.apply(mask, state.s.omega_b, state.c_e, state.rs_s, state.erode)
+    out = augment.apply(mask, state.s.omega_b, state.c_e, state.rs_s, state.erode)
+    if cfg.fov is not None:
+        out = out * fov_valid(cfg.image_size, cfg.image_size, cfg.fov)
+    return out
 
 
 def _gate_relative(state: EnvState, cfg: EnvConfig):

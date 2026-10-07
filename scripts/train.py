@@ -51,6 +51,8 @@ def main() -> int:
     ap.add_argument("--preset", default="small", choices=sorted(PRESETS))
     ap.add_argument("--from-phase", type=int, default=1, choices=(1, 2, 3))
     ap.add_argument("--seed", type=int, default=0)
+    ap.add_argument("--hw", action="store_true",
+                    help="train on our drone and gate (docs/hardware.md): the hw_* task")
     ap.add_argument("--dry-run", action="store_true")
     args, extra = ap.parse_known_args()
 
@@ -58,6 +60,10 @@ def main() -> int:
         sys.exit(f"{MAIN} missing -- run scripts/setup_dreamerv3.sh first")
 
     preset = PRESETS[args.preset]
+    if args.hw:
+        # `main.py` splits the task on its first underscore: skydreamer_hw_<track>.
+        track = "big" if args.preset == "big" else "inverted_loop"
+        extra = ["--task", f"skydreamer_hw_{track}", *extra]
     logdir = pathlib.Path(args.logdir).expanduser()
 
     for phase in (1, 2, 3):

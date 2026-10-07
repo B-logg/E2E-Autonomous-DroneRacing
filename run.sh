@@ -16,6 +16,15 @@
 #       buffer.  <ckpt> is a `ckpt` directory from an earlier run; <dir> is what
 #       scripts/collect_demos.py wrote (its `replay/` is copied in).  Both are
 #       optional and independent.  See docs/deviations.md.
+#   ./run.sh --hw ...
+#       Any of the above on OUR drone and gate instead of the paper's (2.1 m gate
+#       frame, camera 10 cm forward, thrust-to-weight 4.3, a window sized for the
+#       airframe; docs/hardware.md).  The world model is trained from scratch --
+#       the images differ too much to warm-start from a paper-gate run.
+#         ./run.sh --hw --collect-demos
+#         ./run.sh --hw --demos demos_hw
+#       Evaluate with ./run_test.sh, which scores such a run on the `physical`
+#       protocol (the airframe's whole footprint against the real 1.5 m opening).
 #   ./run.sh --setup-only ~10 min  install everything, train nothing
 #   ./run.sh --eval-only  ~10 min  re-evaluate the newest run (100 eps x 5 laps)
 #   ./run.sh --video      ~5 min   render the newest run flying (gif + figures)
@@ -46,6 +55,8 @@ PY_VERSION="3.11"            # jax 0.4.33, which dreamerv3 pins, supports 3.10-3
 LOGROOT="${SKYDREAMER_LOGDIR:-${ROOT}/logdir}"
 
 MODE="full"
+HW=0
+HW_TAG=""
 PRESET="small"
 EXTRA=()
 WARM_CKPT=""
@@ -72,6 +83,7 @@ for arg in "$@"; do
     --video)      MODE="video" ;;
     --all)        MODE="all" ;;
     --big)        PRESET="big" ;;
+    --hw)         HW=1; HW_TAG="-hw" ;;
     *)            EXTRA+=("${arg}") ;;
   esac
 done
@@ -393,17 +405,24 @@ fi
 
 # --------------------------------------------------------------------------
 if [ "${MODE}" = "smoke" ]; then
-  RUN_DIR="${LOGROOT}/smoke-$(date +%Y%m%d-%H%M%S)"
+  RUN_DIR="${LOGROOT}/smoke${HW_TAG}-$(date +%Y%m%d-%H%M%S)"
+  HW_TASK=()
+  [ "${HW}" = "0" ] || HW_TASK=(--task skydreamer_hw_inverted_loop)
   log "Smoke test -> ${RUN_DIR}"
   echo "Tiny model, 2k steps. Proves the pipeline runs; the policy will be useless."
   "${PY}" -m pytest "${ROOT}/tests" -q -x --ignore="${ROOT}/tests/test_gatenet.py"
   "${PY}" "${DV3_DIR}/dreamerv3/main.py" \
       --configs skydreamer size1m --logdir "${RUN_DIR}" \
+      ${HW_TASK[@]+"${HW_TASK[@]}"} \
       --run.steps 2000 --run.envs 4 --batch_size 8 --batch_length 16 \
       --report_length 16 --replay_context 1 --run.train_ratio 16 \
       --run.log_every 20 --run.report_every 1e9 --run.save_every 500 \
       "${JAX_ARGS[@]+"${JAX_ARGS[@]}"}" "${LOG_ARGS[@]}"
   "${PY}" "${ROOT}/scripts/evaluate.py" --logdir "${RUN_DIR}" --episodes 8 --laps 1
+  if [ "${HW}" = "1" ]; then
+    "${PY}" "${ROOT}/scripts/evaluate.py" --logdir "${RUN_DIR}" --episodes 8 --laps 1 \
+        --protocol physical
+  fi
   log "Smoke test passed. Now run './run.sh' for the real thing."
   exit 0
 fi
@@ -413,13 +432,19 @@ if [ "${MODE}" = "demos" ]; then
   log "Collecting demonstrations"
   echo "The controller completes a 2000-step episode about one time in six, so"
   echo "this screens thousands of seeds and keeps the ones that survive."
-  OUT="${EXTRA_OUT:-${ROOT}/demos}"
+  HW_ARGS=()
+  if [ "${HW}" = "1" ]; then
+    HW_ARGS=(--hw)
+    OUT="${EXTRA_OUT:-${ROOT}/demos_hw}"
+  fi
+  OUT="${EXTRA_OUT:-${OUT:-${ROOT}/demos}}"
   "${PY}" "${ROOT}/scripts/collect_demos.py" --preset "${PRESET}" --out "${OUT}" \
+      "${HW_ARGS[@]+"${HW_ARGS[@]}"}" \
       --episodes "${DEMO_SCAN}" --max-keep "${DEMO_KEEP}" \
       "${EXTRA[@]+"${EXTRA[@]}"}"
   log "Done"
   echo "  demonstrations  ${OUT}/replay"
-  echo "  seed them with  ./run.sh --demos ${OUT}"
+  echo "  seed them with  ./run.sh ${HW_TAG:+--hw }--demos ${OUT}"
   exit 0
 fi
 
@@ -436,8 +461,9 @@ if [ "${MODE}" = "resume" ]; then
   echo "DreamerV3 picks up from the checkpoint in this logdir; phases re-run"
   echo "cheaply because run.steps is a cumulative ceiling."
 else
-  RUN_DIR="${LOGROOT}/${PRESET}-$(date +%Y%m%d-%H%M%S)"
+  RUN_DIR="${LOGROOT}/${PRESET}${HW_TAG}-$(date +%Y%m%d-%H%M%S)"
   log "Training -> ${RUN_DIR}"
+  [ "${HW}" = "0" ] || echo "Our drone and gate: hw_* task (docs/hardware.md); fresh world model."
   echo "Paper: ~50 h on 4/7 of an A100 80GB; a full A100 should do it in ~30 h."
   echo "Detach this (tmux/screen/nohup) -- and if the instance dies, ./run.sh --resume"
 fi
@@ -482,6 +508,9 @@ if [ -n "${WARM_CKPT}" ]; then
   EXTRA+=(--run.from_checkpoint_regex '^(dyn|enc|dec|rew|con)/')
 fi
 
+TRAIN_HW=()
+[ "${HW}" = "0" ] || TRAIN_HW=(--hw)
+
 # DreamerV3 never deletes replay chunks; without this the disk fills mid-run.
 "${PY}" "${ROOT}/scripts/prune_replay.py" --logdir "${RUN_DIR}" \
     --keep-steps "${DISK_STEPS}" --interval 600 >> "${RUN_DIR}/prune.log" 2>&1 &
@@ -489,7 +518,8 @@ PRUNER=$!
 trap 'kill ${PRUNER} 2>/dev/null || true' EXIT
 
 "${PY}" "${ROOT}/scripts/train.py" \
-    --logdir "${RUN_DIR}" --preset "${PRESET}" --jax.prealloc False \
+    --logdir "${RUN_DIR}" --preset "${PRESET}" "${TRAIN_HW[@]+"${TRAIN_HW[@]}"}" \
+    --jax.prealloc False \
     "${JAX_ARGS[@]+"${JAX_ARGS[@]}"}" "${LOG_ARGS[@]}" "${ENV_ARGS[@]}" \
     "${EXTRA[@]+"${EXTRA[@]}"}" \
     2>&1 | tee -a "${RUN_DIR}/train.log"
@@ -497,6 +527,11 @@ trap 'kill ${PRUNER} 2>/dev/null || true' EXIT
 log "Evaluating in simulation"
 "${PY}" "${ROOT}/scripts/evaluate.py" --logdir "${RUN_DIR}" --episodes 100 --laps 5 \
     2>&1 | tee -a "${RUN_DIR}/eval.log"
+if [ "${HW}" = "1" ]; then
+  log "Evaluating on our gate: the whole airframe against the real opening"
+  "${PY}" "${ROOT}/scripts/evaluate.py" --logdir "${RUN_DIR}" --episodes 200 --laps 5 \
+      --protocol physical 2>&1 | tee -a "${RUN_DIR}/eval.log"
+fi
 
 log "Done"
 echo "  results   ${RUN_DIR}/evaluation.txt"
