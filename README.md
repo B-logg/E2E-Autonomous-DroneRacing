@@ -1,52 +1,46 @@
-# SkyDreamer — DreamerV3 drone racing with direct motor control
+# SkyDreamer — 모터를 직접 제어하는 DreamerV3 드론 레이싱
 
-A policy that flies a drone through gates from a gate-segmentation mask and gyro/RPM
-readings, outputting the four motor commands directly. A DreamerV3 world model with an
-informed (privileged-state) decoder is the state estimator. Method:
-[SkyDreamer, arXiv:2510.14783](https://arxiv.org/abs/2510.14783), rebuilt from the paper alone.
+게이트 분할 마스크와 자이로·RPM 값만 보고 네 개의 모터 명령을 직접 출력해 게이트를 통과하는 정책입니다.
+정보 디코더(informed decoder)를 붙인 DreamerV3 월드모델이 상태 추정기 역할을 합니다.
+방법은 [SkyDreamer (arXiv:2510.14783)](https://arxiv.org/abs/2510.14783)이며, 논문만 보고 새로 구현했습니다.
 
-## Simulation results
+## 시뮬레이션 결과
 
-Inverted-loop track (3 gates per lap, one virtual gate), checkpoint at 16.99M steps,
-200 episodes x 5 laps, evaluation as in the paper (Table III evaluation column, every
-episode from the start gate).
+인버티드 루프 트랙(한 바퀴 게이트 3개, 가상 게이트 1개 포함), 16.99M 스텝 체크포인트,
+200 에피소드 × 5랩. 평가는 논문과 같은 방식입니다(Table III 평가 열, 모든 에피소드를 시작 게이트에서 출발).
 
-| | this work | paper (Table IV) |
+| | 이 구현 | 논문 (Table IV) |
 |---|---|---|
-| 5-lap success | **87.5%** (175/200, 95% CI ±4.6) | 100% |
-| lap 1 time | 1.93 s | 3.37 s |
-| laps 2-5 time | 2.24 s | 3.25 s |
-| peak speed, mean over episodes | 12.8 m/s | 13 m/s |
-| peak acceleration, mean over episodes | 6.2 g | 6 g |
-| peak speed / acceleration, maximum | 17.9 m/s / 10.4 g | — |
-| mean distance from gate centre at crossing | 0.32 m | — |
-| world-model position error (decoded vs true) | 0.14 m whole flight, 0.25 m first 20 steps | — |
-| world-model velocity error | 0.67 m/s whole flight | — |
+| 5랩 성공률 | **87.5%** (175/200, 95% 신뢰구간 ±4.6) | 100% |
+| 1랩 시간 | 1.93 s | 3.37 s |
+| 2~5랩 시간 | 2.24 s | 3.25 s |
+| 최고 속도 (에피소드별 최고값의 평균) | 12.8 m/s | 13 m/s |
+| 최고 가속도 (에피소드별 최고값의 평균) | 6.2 g | 6 g |
+| 최고 속도 / 가속도 (전체 최댓값) | 17.9 m/s / 10.4 g | — |
+| 게이트 통과 시 중심에서의 평균 거리 | 0.32 m | — |
+| 월드모델 위치 오차 (복원값 대 실제값) | 전체 비행 0.14 m, 처음 20스텝 0.25 m | — |
+| 월드모델 속도 오차 | 전체 비행 0.67 m/s | — |
 
-Episode outcomes: 175 complete five laps, 17 hit the ground, 8 hit a gate. 14 of the 25
-failures are in the first two gates.
+에피소드 결과: 5랩 완주 175, 지면 충돌 17, 게이트 충돌 8. 실패 25건 중 14건은 첫 두 게이트에서 발생했습니다.
 
-![flight 0](docs/results/flight_0.gif)
-![flight 1](docs/results/flight_1.gif)
+![비행 0](docs/results/flight_0.gif)
+![비행 1](docs/results/flight_1.gif)
 
-Two laps, 16.99M checkpoint. Panels: the mask the policy receives, 3D view, top-down and
-side views coloured by speed.
+16.99M 체크포인트의 2랩 비행입니다. 패널 구성: 정책이 받는 마스크, 3D 뷰, 위에서 본 뷰와 옆에서 본 뷰(속도별 색상).
 
-![trajectory against the world model's belief](docs/results/figure_0.png)
+![월드모델의 추정과 실제 궤적 비교](docs/results/figure_0.png)
 
-Ground truth (colour) against the world model's decoded position (blue), 0.20 m mean error.
-Arrows are the camera axis.
+실제 궤적(색상)과 월드모델이 복원한 위치(파란선), 평균 오차 0.20 m. 화살표는 카메라 광축입니다.
 
-### Training
+### 학습
 
-17M steps, three phases (defaults; `batch_length` 256 from 8M; entropy 1e-5 and lr 2e-6
-from 13M), `size12m`, `train_ratio` 128. World model initialised from an earlier run,
-actor-critic from scratch, replay seeded with 800 expert episodes (2000 steps each, 5-9
-gates).
+17M 스텝, 3단계 일정(기본 설정 → 8M부터 `batch_length` 256 → 13M부터 엔트로피 1e-5, 학습률 2e-6),
+모델 크기 `size12m`, `train_ratio` 128. 월드모델은 이전 학습에서 가져와 초기화하고, 행동 정책(actor-critic)은
+처음부터 학습했으며, 리플레이 버퍼에 전문가 에피소드 800개(각 2000스텝, 5~9게이트 통과)를 미리 넣었습니다.
 
-![learning curve](docs/results/learning_curve.png)
+![학습 곡선](docs/results/learning_curve.png)
 
-| step | success | gates passed (of 15) | position error [m] | episodes |
+| 스텝 | 성공률 | 통과 게이트 수 (최대 15) | 위치 오차 [m] | 에피소드 수 |
 |---|---|---|---|---|
 | 1.2M | 0% | 1.12 | 1.59 | 100 |
 | 6.2M | 73% | 12.40 | 0.25 | 100 |
@@ -55,65 +49,64 @@ gates).
 | 14.9M | 87% | 13.55 | 0.15 | 100 |
 | 17.0M | 87.5% | 13.56 | 0.14 | 200 |
 
-Success is flat from 11M within the confidence interval (±5-6 points).
+11M 이후 성공률은 신뢰구간(±5~6%p) 안에서 거의 변하지 않습니다.
 
-### Gate window
+### 게이트 통과 판정 창
 
-The simulator's gate window `d_g` is the paper's "effective gate size" (train 0.8 m,
-evaluation 1.0 m). The track's gates are 1.5 m clear, 0.75 m half-width. The policy does not
-observe `d_g`, so one set of flights scored at several windows gives the success at each.
+시뮬레이터의 통과 판정 창 `d_g`는 논문이 말하는 "게이트의 유효 크기"입니다(학습 0.8 m, 평가 1.0 m).
+이 트랙의 게이트는 안쪽 1.5 m, 즉 반폭 0.75 m입니다. 정책은 `d_g`를 관측하지 않으므로, 한 번 비행한 기록을
+여러 창 크기로 채점하면 창마다의 성공률을 얻을 수 있습니다.
 
-| window half-width | 1.0 | 0.9 | 0.8 | 0.75 | 0.7 | 0.6 | 0.5 |
+| 창 반폭 | 1.0 | 0.9 | 0.8 | 0.75 | 0.7 | 0.6 | 0.5 |
 |---|---|---|---|---|---|---|---|
-| success, all gates | 91.0% | 89.8% | 82.4% | 75.4% | 64.8% | 37.1% | 13.3% |
-| success, real gates only | 91.8% | 91.0% | 86.3% | 81.6% | 74.6% | 52.7% | 28.9% |
+| 성공률, 전체 게이트 | 91.0% | 89.8% | 82.4% | 75.4% | 64.8% | 37.1% | 13.3% |
+| 성공률, 실제 게이트만 | 91.8% | 91.0% | 86.3% | 81.6% | 74.6% | 52.7% | 28.9% |
 
-![success against window](docs/results/window_sweep.png)
+![창 크기에 따른 성공률](docs/results/window_sweep.png)
 
-Evaluation protocols (`scripts/evaluate.py --protocol`), same checkpoint, 200 episodes:
+평가 프로토콜(`scripts/evaluate.py --protocol`) 비교, 같은 체크포인트, 200 에피소드:
 
-| protocol | definition | success |
+| 프로토콜 | 정의 | 성공률 |
 |---|---|---|
-| `paper` | Table III evaluation column, start gate, d_g 1.0 m | **87.5%** |
-| `strict` | as `paper`, d_g 0.8 m | 77.5% |
-| `mixed` | 70% training column, random start gate | 56.0% |
+| `paper` | Table III 평가 열, 시작 게이트 출발, d_g 1.0 m | **87.5%** |
+| `strict` | `paper`와 같되 d_g 0.8 m | 77.5% |
+| `mixed` | 학습 열 70%, 시작 게이트 무작위 | 56.0% |
 
-### Limits
+### 한계
 
-- Success is 87.5%, not the paper's 100%.
-- Peak speed and acceleration in the best episodes exceed the paper's figures
-  (17.9 m/s, 10.4 g).
-- The Figure 9 track, flown zero-shot, is not completed: 0/100.
-- Simulation only; no real flight.
+- 성공률은 논문의 100%가 아니라 87.5%입니다.
+- 가장 잘 난 에피소드의 최고 속도·가속도(17.9 m/s, 10.4 g)는 논문 수치를 넘습니다.
+- 논문 Figure 9 트랙을 추가 학습 없이 그대로 비행하면 완주하지 못합니다: 0/100.
+- 시뮬레이션 결과이며, 실제 비행은 하지 않았습니다.
 
-## Run
+## 실행
 
 ```bash
-./run.sh --smoke                          # ~5 min, whole pipeline on a tiny model
-./run.sh --collect-demos                  # expert demonstrations -> demos/
-./run.sh --warm-start <ckpt> --demos demos   # the recipe above
-./run.sh                                  # plain 17M-step run from scratch
-./run.sh --resume                         # continue the newest run
-./run_test.sh                             # score + render the newest checkpoint, also mid-training
-./run_test.sh --protocol strict           # paper | strict | mixed | physical
+./run.sh --smoke                             # 약 5분, 작은 모델로 전체 파이프라인 점검
+./run.sh --collect-demos                     # 전문가 시연 수집 -> demos/
+./run.sh --warm-start <ckpt> --demos demos   # 위 결과를 낸 방식
+./run.sh                                     # 처음부터 17M 스텝 학습
+./run.sh --resume                            # 가장 최근 학습 이어서 진행
+./run_test.sh                                # 최신 체크포인트 평가와 영상 생성 (학습 중에도 가능)
+./run_test.sh --protocol strict              # paper | strict | mixed | physical
 ```
 
-Needs an NVIDIA GPU (24 GB, BF16-capable), `git` and `curl`; `run.sh` installs the rest.
-Logs and evaluations land in `logdir/<run>/`.
+NVIDIA GPU(24 GB, BF16 지원), `git`, `curl`이 필요하며 나머지는 `run.sh`가 설치합니다.
+로그와 평가 결과는 `logdir/<실행 이름>/`에 저장됩니다.
 
-## Our drone and gate
+## 우리 기체와 게이트
 
-`./run.sh --hw` trains on our flight-test hardware (2.1 m gate frame, camera 10 cm forward,
-114.6° x 92.15° field of view, thrust-to-weight 4.3) and `./run_test.sh` scores such a run
-with the `physical` protocol. See [`docs/hardware.md`](docs/hardware.md).
+`./run.sh --hw`는 우리 비행 테스트 환경(게이트 바깥 2.1 m, 카메라 10 cm 앞, 시야각 114.6° × 92.15°,
+추력대중량비 4.3)으로 학습하고, `./run_test.sh`는 이렇게 학습한 결과를 `physical` 프로토콜로 평가합니다.
+자세한 내용은 [`docs/hardware.md`](docs/hardware.md)를 보세요.
 
-## Layout
+## 구성
 
 ```
-skydreamer/        dynamics, track, mask renderer, informed-POMDP env, hardware profile
+skydreamer/        동역학, 트랙, 마스크 렌더러, 정보 POMDP 환경, 기체 프로파일
 scripts/           train, evaluate, visualize, collect_demos, make_readme_figs
-patches/           informed decoder + smoothness loss for DreamerV3 (cdf5709)
-tests/             121 tests, including a paper-conformance audit
+patches/           DreamerV3(cdf5709)용 정보 디코더와 부드러움 손실 패치
+tests/             테스트 121개 (논문 일치 검사 포함)
 docs/              paper_gaps.md, deviations.md, hardware.md, datasets.md
-docs/results/      figures above
+docs/results/      위의 그림들
 ```
