@@ -1,8 +1,8 @@
-# SkyDreamer — 모터를 직접 제어하는 DreamerV3 드론 레이싱
+# 모터를 직접 제어하는 DreamerV3 드론 레이싱
 
 게이트 분할 마스크와 자이로·RPM 값만 보고 네 개의 모터 명령을 직접 출력해 게이트를 통과하는 정책입니다.
 정보 디코더(informed decoder)를 붙인 DreamerV3 월드모델이 상태 추정기 역할을 합니다.
-방법은 [SkyDreamer (arXiv:2510.14783)](https://arxiv.org/abs/2510.14783)이며, 논문만 보고 새로 구현했습니다.
+액터-크리틱은 월드모델이 만든 상상 속 비행에서 행동을 학습합니다.
 
 ## 시뮬레이션 결과
 
@@ -74,25 +74,11 @@
 
 ### 한계
 
-- 성공률은 논문의 100%가 아니라 87.5%입니다.
+- 성공률은 87.5%
 - 가장 잘 난 에피소드의 최고 속도·가속도(17.9 m/s, 10.4 g)는 논문 수치를 넘습니다.
-- 논문 Figure 9 트랙을 추가 학습 없이 그대로 비행하면 완주하지 못합니다: 0/100.
-- 시뮬레이션 결과이며, 실제 비행은 하지 않았습니다.
+- 논문 Figure 9 트랙(big track, Out-of-distribution)을 추가 학습 없이 그대로 비행하면 완주하지 못합니다: 0/100.
+- 시뮬레이션 결과이며, **실기체 전환은 진행 중**
 
-## 실행
-
-```bash
-./run.sh --smoke                             # 약 5분, 작은 모델로 전체 파이프라인 점검
-./run.sh --collect-demos                     # 전문가 시연 수집 -> demos/
-./run.sh --warm-start <ckpt> --demos demos   # 위 결과를 낸 방식
-./run.sh                                     # 처음부터 17M 스텝 학습
-./run.sh --resume                            # 가장 최근 학습 이어서 진행
-./run_test.sh                                # 최신 체크포인트 평가와 영상 생성 (학습 중에도 가능)
-./run_test.sh --protocol strict              # paper | strict | mixed | physical
-```
-
-NVIDIA GPU(24 GB, BF16 지원), `git`, `curl`이 필요하며 나머지는 `run.sh`가 설치합니다.
-로그와 평가 결과는 `logdir/<실행 이름>/`에 저장됩니다.
 
 ## 우리 기체와 게이트
 
@@ -100,13 +86,8 @@ NVIDIA GPU(24 GB, BF16 지원), `git`, `curl`이 필요하며 나머지는 `run.
 추력대중량비 4.3)으로 학습하고, `./run_test.sh`는 이렇게 학습한 결과를 `physical` 프로토콜로 평가합니다.
 자세한 내용은 [`docs/hardware.md`](docs/hardware.md)를 보세요.
 
-## 구성
-
-```
-skydreamer/        동역학, 트랙, 마스크 렌더러, 정보 POMDP 환경, 기체 프로파일
-scripts/           train, evaluate, visualize, collect_demos, make_readme_figs
-patches/           DreamerV3(cdf5709)용 정보 디코더와 부드러움 손실 패치
-tests/             테스트 121개 (논문 일치 검사 포함)
-docs/              paper_gaps.md, deviations.md, hardware.md, datasets.md
-docs/results/      위의 그림들
-```
+### 참고
+- SkyDreamer (https://arxiv.org/abs/2510.14783)
+- MonoRace (https://arxiv.org/abs/2601.15222)
+- DreamerV3 (https://arxiv.org/abs/2301.04104)
+- Imitation learning (https://cding.tistory.com/71)
