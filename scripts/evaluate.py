@@ -491,6 +491,7 @@ def summarize(records, decode: dict, n_gates: int, laps: int):
                 rows.append(dict(
                     twr=f"{lo:g}-{hi:g}" if hi < 99 else f">={lo:g}", n=len(sel),
                     success=float(np.mean([r["success"] for r in sel])),
+                    gates=float(np.mean([r["gates"] for r in sel])),
                     ground_before_gate1=int(sum(1 for r in sel if r["cause"] == 2 and r["gates"] == 0))))
         out["by_twr"] = rows
 
@@ -537,6 +538,7 @@ def report(name: str, s: dict, protocol: str = "paper") -> str:
         L.append("\n--- by thrust-to-weight of the airframe ---")
         for r in s["by_twr"]:
             L.append(f"  TWR {r['twr']:<8} n={r['n']:<4} success {r['success']:.1%}   "
+                     f"gates {r.get('gates', float('nan')):5.2f}   "
                      f"ground deaths before gate 1: {r['ground_before_gate1']}")
     ph = s.get("physical")
     if ph:

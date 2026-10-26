@@ -23,6 +23,11 @@
 #       the images differ too much to warm-start from a paper-gate run.
 #         ./run.sh --hw --collect-demos
 #         ./run.sh --hw --demos demos_hw
+#         ./run.sh --hw --warm-start warm_hw --demos demos_hw
+#       The last keeps a previous hw run's world model (copy its `ckpt` directory
+#       to warm_hw/) with the actor-critic fresh -- the recipe that worked on the
+#       paper's drone (docs/deviations.md).  `./run.sh --resume` picks --hw up from
+#       the run's own config.
 #       Evaluate with ./run_test.sh, which scores such a run on the `physical`
 #       protocol (the airframe's whole footprint against the real 1.5 m opening).
 #   ./run.sh --setup-only ~10 min  install everything, train nothing
@@ -460,10 +465,26 @@ if [ "${MODE}" = "resume" ]; then
   log "Resuming ${RUN_DIR}"
   echo "DreamerV3 picks up from the checkpoint in this logdir; phases re-run"
   echo "cheaply because run.steps is a cumulative ceiling."
+  # DreamerV3 rebuilds its config from the command line, not from the logdir, so
+  # resuming a run trained on our hardware without --hw would quietly continue it
+  # on the paper's drone and gate.  Read the task the run was started with instead.
+  if grep -q 'task: skydreamer_hw_' "${RUN_DIR}/config.yaml" 2>/dev/null && [ "${HW}" = "0" ]; then
+    HW=1; HW_TAG="-hw"
+    echo "this run was trained on our drone and gate -- resuming with --hw"
+  fi
+  # A resumed run restores its own checkpoint; a warm start would be overwritten
+  # by it anyway, so drop one if it was passed.
+  WARM_CKPT=""
 else
   RUN_DIR="${LOGROOT}/${PRESET}${HW_TAG}-$(date +%Y%m%d-%H%M%S)"
   log "Training -> ${RUN_DIR}"
-  [ "${HW}" = "0" ] || echo "Our drone and gate: hw_* task (docs/hardware.md); fresh world model."
+  if [ "${HW}" = "1" ]; then
+    if [ -n "${WARM_CKPT}" ]; then
+      echo "Our drone and gate: hw_* task (docs/hardware.md); world model from ${WARM_CKPT}."
+    else
+      echo "Our drone and gate: hw_* task (docs/hardware.md); fresh world model."
+    fi
+  fi
   echo "Paper: ~50 h on 4/7 of an A100 80GB; a full A100 should do it in ~30 h."
   echo "Detach this (tmux/screen/nohup) -- and if the instance dies, ./run.sh --resume"
 fi

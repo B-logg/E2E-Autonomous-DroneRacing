@@ -298,3 +298,17 @@ Changed from the paper: gate frame 2.7 -> 2.1 m, camera 0.10 m forward, camera f
 (estimate), gate window d_g 0.8/1.0 -> 0.65/0.60, tunnel t_g 0.8 -> 0.40. Track layout, the
 Table III randomisation, the camera tilt (45-55 deg), the reward and the training recipe are
 the paper's. Evaluated on the `physical` protocol, which is ours.
+
+### Run 4 and the next run
+
+Run 4 trained the `hw_*` task from scratch (world model and actor-critic both fresh, hw
+demonstrations seeded). Stopped at 8.79M steps: 0% success under `physical`; 75-77% of
+episodes finish one lap and then crash. The same checkpoint flown with the paper's
+thrust-to-weight (6.07) still finishes no run, so the policy is stuck, not merely
+under-powered -- the fast-and-crash optimum run 2 also fell into. Run 3's policy, flown with
+only its thrust lowered to 4.3, drops from 91% to 45%.
+
+Run 5 repeats run 3's recipe on the `hw_*` task: run 4's world model (8.79M) kept, the
+actor-critic fresh, the same hw demonstrations:
+
+    ./run.sh --hw --warm-start warm_hw --demos demos_hw

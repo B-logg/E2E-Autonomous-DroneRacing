@@ -409,8 +409,13 @@ def render(ep, track, out_stem, stride, fps, chase_res=CHASE_RES):
         plt.close(fig)
 
     gif = out_stem.with_suffix(".gif")
+    # A GIF stores each delay in whole centiseconds, so 1000 / 30 = 33 ms is played as
+    # 30 ms and the clip runs ~10% fast.  Spread the rounding over the frames instead:
+    # delays of 30 and 40 ms whose running sum tracks i / fps.
+    delays = [round(1000 * (i + 1) / fps / 10) * 10 - round(1000 * i / fps / 10) * 10
+              for i in range(len(frames))]
     frames[0].save(gif, save_all=True, append_images=frames[1:],
-                   duration=int(1000 / fps), loop=0, optimize=True)
+                   duration=delays, loop=0, optimize=True)
     return gif
 
 
