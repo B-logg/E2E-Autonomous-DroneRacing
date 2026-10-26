@@ -19,7 +19,7 @@ Last updated 2026-10-07. Camera and vision pipeline: GateNet and StochGAN are de
 | Motor thrust, HQ5045 BN prop | **1024 g max per motor** (test voltage not stated) | same listing |
 | Motor no-load RPM at 11.1 V | 25,530 (= 2300 x 11.1) | same listing |
 | Battery | 4S 1500 mAh | user |
-| Total mass | ~800 g | user |
+| Total mass | **1.0 kg** (all-up; was ~800 g) | team, 2026-10 |
 | Camera tilt | 20 degrees up | user |
 | Camera FOV | 114.6 deg horizontal, 92.15 deg vertical | user |
 | Camera resolution | 720 x 480 | user |
@@ -36,7 +36,7 @@ the listing's thrust figure is for. **Needs confirming.**
 | Footprint radius, props included | ~0.19 m **(est.)** | 0.125 m arm tip + 0.0635 m prop radius |
 | Footprint radius, frame only | ~0.14 m **(est.)** | arm tip + motor bell |
 | Window for the drone's centre | **~0.56 m** with props, ~0.61 m frame only **(est.)** | 0.75 m opening half-width minus footprint radius. Isotropic and conservative: see below |
-| Peak thrust-to-weight | **<= 5.1** | 4 x 1.024 kgf / 0.8 kg, unloaded |
+| Thrust-to-weight | **4.10** | 4 x 1.024 kgf / 1.0 kg (team, 2026-10). The 1024 g per motor is the listing's figure, voltage not stated; pack sag at the end of a flight would lower it |
 | Realistic thrust-to-weight | **~4.0-4.6 (est.)** | 80-90% of the listing's figure for pack sag; no measurement |
 | Rotor speed at full throttle | 2700-3400 rad/s **(est.)** | no-load 2300 KV x 14.8-16.8 V = 3565-4046 rad/s, 75-85% under a 5 in prop. The simulator's `w_max = 3100` falls inside |
 
@@ -114,7 +114,7 @@ profile up without being told. Source: `HW_PROFILE` in `skydreamer/hardware.py`.
 | Gate outer size | 2.7 m | **2.1 m** | given |
 | Camera position | at CoM | **0.10 m forward** | given |
 | Camera field of view | fills the nominal 104.4 deg square K | **114.6 x 92.15 deg**: all columns valid, top and bottom 6 rows (of 64) blank | given; the real image is remapped onto the nominal K, whose vertical extent is wider than the camera's |
-| Nominal thrust-to-weight | 6.07 | **4.3** (`k_w` scaled; with Table III's randomisation the sampled median is 4.2, 10-90% 2.9-6.1, 1-99% 2.3-7.2) | **estimate**, unmeasured |
+| Nominal thrust-to-weight | 6.07 | **4.10** (`k_w` scaled; with Table III's randomisation the sampled median is 4.0, 10-90% 2.7-5.8, 1-99% 2.2-6.8) | 4 x 1.024 kgf / 1.0 kg (team). Run 4 used an estimate, 4.3 |
 | Window `d_g` train / eval | 0.8 / 1.0 | **0.65 / 0.60** | 0.75 opening half-width less 0.15-0.19 m airframe reach; train a little lenient as the paper's 0.8 is against 0.75 |
 | Tunnel `t_g` | 0.8 m | **0.40 m** | pre/post planes at the airframe's reach (+-0.20 m) |
 | Camera tilt | 45-55 deg | 45-55 deg (unchanged) | the real camera must be mounted there |
@@ -123,7 +123,7 @@ profile up without being told. Source: `HW_PROFILE` in `skydreamer/hardware.py`.
 Not changed, and therefore still mismatched: gate height and the 2.7 m gap of the virtual
 gate (real track unknown), image shape and FOV (vision pipeline deferred), the moment
 coefficients `k_p/k_q/k_r` (only thrust is rescaled, so attitude authority relative to
-thrust is higher than a 4.3 drone would have), motor time constant, delays, inertia.
+thrust is higher than a 4.1 drone would have), motor time constant, delays, inertia.
 
 Scoring: `--protocol physical` (default in `run_test.sh` for such runs) turns the
 simulator's window off and checks every airframe point against the real 1.5 m opening at
@@ -139,3 +139,9 @@ Measured on the 16.99M paper-trained policy, 200 episodes x 5 laps, same seeds:
 | + thrust-to-weight 4.3 / 3.7 / 5.1 | 0.0% / 0.0% / 0.0% | 0.0% |
 
 The policy cannot read a 2.1 m frame at all, so the effects after it are not separable.
+
+## 6. Updates from the team (2026-10)
+
+- All-up mass 1.0 kg; 1024 g static thrust per motor -> thrust-to-weight 4.10, used from run 5.
+- Motor RPM telemetry: a part is being added; assumed available. The policy observes RPM, so
+  without it the observation would have to change and the policy be retrained.

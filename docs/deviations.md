@@ -294,7 +294,7 @@ failures training does not shrink — is in the early-failure analysis
 `./run.sh --hw` trains the same method on our flight-test hardware. Everything is in
 `HW_PROFILE` (`skydreamer/hardware.py`), values and sources in `docs/hardware.md` section 5.
 Changed from the paper: gate frame 2.7 -> 2.1 m, camera 0.10 m forward, camera field of view
-114.6 x 92.15 deg (blank top/bottom rows on the nominal K), nominal thrust-to-weight 6.07 -> 4.3
+114.6 x 92.15 deg (blank top/bottom rows on the nominal K), nominal thrust-to-weight 6.07 -> 4.3 in run 4, 4.1 from run 5
 (estimate), gate window d_g 0.8/1.0 -> 0.65/0.60, tunnel t_g 0.8 -> 0.40. Track layout, the
 Table III randomisation, the camera tilt (45-55 deg), the reward and the training recipe are
 the paper's. Evaluated on the `physical` protocol, which is ours.
@@ -309,6 +309,8 @@ under-powered -- the fast-and-crash optimum run 2 also fell into. Run 3's policy
 only its thrust lowered to 4.3, drops from 91% to 45%.
 
 Run 5 repeats run 3's recipe on the `hw_*` task: run 4's world model (8.79M) kept, the
-actor-critic fresh, the same hw demonstrations:
+actor-critic fresh, the same hw demonstrations, and the thrust-to-weight the team gave
+(4 x 1.024 kgf / 1.0 kg = 4.10; run 4 and its demonstrations used 4.3, which is inside
+the randomised range either way):
 
     ./run.sh --hw --warm-start warm_hw --demos demos_hw

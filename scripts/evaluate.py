@@ -120,7 +120,7 @@ PROTOCOLS = {
 }
 
 # `--hw`: the simulator moved to our drone and gate (skydreamer/hardware.py).
-HW_FULL = dict(twr=4.3, gate_outer=2.1, cam_offset=0.10, fov=(114.6, 92.15))
+HW_FULL = dict(twr=4.1, gate_outer=2.1, cam_offset=0.10, fov=(114.6, 92.15))
 
 
 def apply_hardware(cfg_env, twr=None, gate_outer=None, cam_offset=None, fov=None):
@@ -606,7 +606,7 @@ def main() -> int:
                          "mixed: the 70/30 training mixture (the old accidental default)")
     ap.add_argument("--hw", action="store_true",
                     help="simulate our drone and gate: outer 2.1 m, camera 0.10 m forward, "
-                         "thrust-to-weight 4.3 (override each with the flags below)")
+                         "thrust-to-weight 4.1 (override each with the flags below)")
     ap.add_argument("--hw-twr", type=float, default=None,
                     help="nominal thrust-to-weight (sim paper value 6.07)")
     ap.add_argument("--hw-gate-outer", type=float, default=None)

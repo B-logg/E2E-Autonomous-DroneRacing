@@ -24,8 +24,9 @@ PROP_R = 0.0635       # m, 5 in (physical radius; the dynamics' own 0.0486 is th
 CAM_FORWARD = 0.10    # m ahead of the CoM (given)
 CAM_TIP = 0.12        # m, forward extent of the camera mount (est.)
 CAM_FOV = (114.6, 92.15)   # deg, horizontal x vertical (given); 720 x 480 px
-TWR_CENTRAL = 4.3     # est.: 4 x 1.024 kgf / 0.8 kg = 5.1 unloaded, x ~0.85 for sag
-TWR_RANGE = (3.7, 5.1)
+MASS = 1.0            # kg, all-up (team, 2026-10)
+MOTOR_THRUST = 1.024  # kgf per motor at full throttle (team, 2026-10)
+TWR_CENTRAL = 4 * MOTOR_THRUST / MASS   # = 4.096
 
 # The simulator's nominal thrust-to-weight, k_w * 4 * w_max^2 / g = 6.07.  Captured
 # before anything here touches NOMINAL, so `apply_dynamics` always scales from the
@@ -39,10 +40,12 @@ NOMINAL_TWR = PAPER_K_W * 4 * NOMINAL["w_max"] ** 2 / 9.81
 #   cam_offset  camera 0.10 m ahead of the centre of mass.
 #   fov         114.6 x 92.15 deg: the nominal K is a 104.4 deg square, so the columns
 #               are all valid and ~6 rows top and bottom are blank (see render.fov_valid).
-#   twr         k_w scaled so nominal thrust-to-weight is 4.3; Table III's k_w +-30%
-#               and w_max +-20% then give a median ~4.2 and a 10-90% range of ~2.9-6.1
-#               (1-99%: 2.3-7.2; thrust scales with k_w w_max^2).  NOT measured -- replace with
-#               the static-thrust test when there is one.
+#   twr         k_w scaled so nominal thrust-to-weight is 4 x 1.024 kgf / 1.0 kg = 4.10
+#               (team's figures).  Table III's k_w +-30% and w_max +-20% then give a
+#               median ~4.0 and a 10-90% range of ~2.7-5.8 (1-99%: 2.2-6.8; thrust
+#               scales with k_w w_max^2).  Run 4 trained at 4.3, an estimate.  The 1024 g
+#               is the motor listing's figure at an unstated voltage; replace it with a
+#               thrust-stand reading at working voltage when there is one.
 #   d_g         centre-of-mass window: the 0.75 m opening half-width less the
 #               ~0.15-0.19 m airframe reach.  Train 0.65 is a little lenient, as the
 #               paper's 0.8 is against its 0.75; eval 0.60 is the physical window.

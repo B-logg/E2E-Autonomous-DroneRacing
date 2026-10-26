@@ -18,7 +18,7 @@
 #       optional and independent.  See docs/deviations.md.
 #   ./run.sh --hw ...
 #       Any of the above on OUR drone and gate instead of the paper's (2.1 m gate
-#       frame, camera 10 cm forward, thrust-to-weight 4.3, a window sized for the
+#       frame, camera 10 cm forward, thrust-to-weight 4.1, a window sized for the
 #       airframe; docs/hardware.md).  The world model is trained from scratch --
 #       the images differ too much to warm-start from a paper-gate run.
 #         ./run.sh --hw --collect-demos
