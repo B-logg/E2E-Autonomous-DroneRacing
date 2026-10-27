@@ -88,9 +88,10 @@ export XLA_PYTHON_CLIENT_PREALLOCATE=false
 
 RUN_DIR="$(latest_run || true)"
 [ -n "${RUN_DIR}" ] || die "no run under ${LOGROOT}"
-# A run trained on our hardware (`./run.sh --hw`) has `skydreamer_hw_*` as its task and
-# is scored on the `physical` protocol unless told otherwise.
-if grep -q 'task: skydreamer_hw_' "${RUN_DIR}/config.yaml"; then
+# A run trained on our hardware (`./run.sh --hw`, or `--finetune` at any stage:
+# `skydreamer_hw1_*` ..) is scored on the full profile with the `physical`
+# protocol unless told otherwise.
+if grep -q 'task: skydreamer_hw' "${RUN_DIR}/config.yaml"; then
   [ ${#PROTOCOLS[@]} -gt 0 ] || PROTOCOLS=(physical)
   echo "run trained on our drone and gate -> protocol: ${PROTOCOLS[*]}"
 fi

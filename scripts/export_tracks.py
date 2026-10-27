@@ -85,6 +85,7 @@ NOTES = {
 
 def build() -> dict:
     from skydreamer.embodied_env import TRACK_T_G, TRACKS
+    from skydreamer.hardware import split_task
     from skydreamer.params import EVAL, TRAIN
 
     out = {
@@ -105,7 +106,7 @@ def build() -> dict:
     }
 
     for name in TRACKS:
-        if name.startswith("hw_"):
+        if split_task(name)[0] is not None:
             continue   # same layouts on our drone and gate; docs/hardware.md
         tr = TRACKS[name]()
         pos = np.asarray(tr.pos, float)

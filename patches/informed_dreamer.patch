@@ -259,7 +259,7 @@ index 10476e8..92a0a22 100644
            f'MemoryMaze-{task}-v0', **kw),
    }[suite]
 diff --git a/embodied/run/train.py b/embodied/run/train.py
-index fc791ec..e2b3e26 100644
+index fc791ec..35f3310 100644
 --- a/embodied/run/train.py
 +++ b/embodied/run/train.py
 @@ -58,7 +58,14 @@ def train(make_agent, make_replay, make_env, make_stream, make_logger, args):
@@ -291,3 +291,12 @@ index fc791ec..e2b3e26 100644
  
    print('Start training loop')
    policy = lambda *args: agent.policy(*args, mode='train')
+@@ -116,4 +129,8 @@ def train(make_agent, make_replay, make_env, make_stream, make_logger, args):
+     if should_save(step):
+       cp.save()
+ 
++  # `should_save` is a clock (save_every seconds), so reaching `steps` would
++  # otherwise drop everything since the last save.  skydreamer's scripts/train.py
++  # runs each phase as its own invocation, and the next one resumes from here.
++  cp.save()
+   logger.close()

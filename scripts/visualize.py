@@ -527,9 +527,12 @@ def main() -> int:
         import ruamel.yaml as yaml
 
         task = yaml.YAML(typ="safe").load((logdir / "config.yaml").read_text())["task"]
-        track_name = args.track or task.split("_", 1)[1]
-        if task.split("_", 1)[1].startswith("hw_") and not track_name.startswith("hw_"):
-            track_name = "hw_" + track_name   # a run trained on our hardware flies on it
+        from skydreamer.hardware import full_hw, split_task
+
+        trained_on = full_hw(task.split("_", 1)[1])   # any hw stage flies the full profile
+        track_name = args.track or trained_on
+        if split_task(trained_on)[0] is not None:     # a run trained on our hardware flies on it
+            track_name = full_hw(track_name if split_task(track_name)[0] else "hw_" + track_name)
         if args.track:
             out = args.out or (logdir / f"video_{args.track}")
             out.mkdir(parents=True, exist_ok=True)

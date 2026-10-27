@@ -12,10 +12,22 @@ invocation resuming from the previous phase's checkpoint in the same logdir.
   big track (35M steps; III-D)
     phase boundaries move to 23M and 31M, train_ratio 64, symlog off.
 
+  --finetune (run 6, 9M steps; docs/deviations.md)
+    fine-tune a finished paper-drone agent on our hardware, switching our
+    conditions on a few at a time (skydreamer/hardware.py, HW_STAGES):
+    stage 1   0   -> 0.5M  hw1: camera forward, our FOV, 2.4 m frame
+    stage 2   0.5 -> 1.5M  hw2: + our 2.1 m frame
+    stage 3   1.5 -> 3M    hw3: + our thrust-to-weight
+    stage 4   3   -> 7M    hw:  + our gate window (the full profile)
+    stage 5   7   -> 9M    hw, the paper's phase-3 fine-tune settings
+    Stages 1-4 use the paper's phase-2 settings.  The agent to start from is
+    passed as --run.from_checkpoint (./run.sh --finetune does this).
+
 Usage:
   python scripts/train.py --logdir ~/logdir/sd/run1
   python scripts/train.py --logdir ~/logdir/sd/big1 --preset big
   python scripts/train.py --logdir ~/logdir/sd/run1 --from-phase 2   # resume
+  python scripts/train.py --logdir ~/logdir/sd/ft1 --finetune --run.from_checkpoint <ckpt>
 """
 
 from __future__ import annotations
@@ -44,15 +56,32 @@ PHASE_ARGS = {
     ],
 }
 
+# Only the agent is loaded from the checkpoint, not its step counter, so these
+# count fine-tuning steps from 0.  Phase 2's settings are the ones run 3 kept
+# improving under (73% -> 91% between 6M and 11M) without forgetting what it
+# could already fly.
+FINETUNE = [
+    (0.5e6, "hw1", PHASE_ARGS[2]),
+    (1.5e6, "hw2", PHASE_ARGS[2]),
+    (3.0e6, "hw3", PHASE_ARGS[2]),
+    (7.0e6, "hw", PHASE_ARGS[2]),
+    (9.0e6, "hw", PHASE_ARGS[3]),
+]
+
 
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--logdir", required=True)
     ap.add_argument("--preset", default="small", choices=sorted(PRESETS))
-    ap.add_argument("--from-phase", type=int, default=1, choices=(1, 2, 3))
+    ap.add_argument("--from-phase", type=int, default=1, choices=(1, 2, 3, 4, 5),
+                    help="1-3, or 1-5 with --finetune")
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--hw", action="store_true",
                     help="train on our drone and gate (docs/hardware.md): the hw_* task")
+    ap.add_argument("--finetune", action="store_true",
+                    help="fine-tune a finished agent on our hardware in stages (run 6)")
+    ap.add_argument("--steps-scale", type=float, default=1.0,
+                    help="multiply every phase boundary (testing the phase chain end to end)")
     ap.add_argument("--dry-run", action="store_true")
     args, extra = ap.parse_known_args()
 
@@ -60,16 +89,23 @@ def main() -> int:
         sys.exit(f"{MAIN} missing -- run scripts/setup_dreamerv3.sh first")
 
     preset = PRESETS[args.preset]
-    if args.hw:
-        # `main.py` splits the task on its first underscore: skydreamer_hw_<track>.
-        track = "big" if args.preset == "big" else "inverted_loop"
-        extra = ["--task", f"skydreamer_hw_{track}", *extra]
+    # `main.py` splits the task on its first underscore: skydreamer_hw_<track>.
+    track = "big" if args.preset == "big" else "inverted_loop"
+    if args.finetune:
+        if args.preset != "small":
+            sys.exit("--finetune is defined for the small preset only")
+        phases = [(steps, f"skydreamer_{stage}_{track}", over) for steps, stage, over in FINETUNE]
+    else:
+        task = f"skydreamer_hw_{track}" if args.hw else None
+        phases = [(steps, task, PHASE_ARGS[i + 1])
+                  for i, steps in enumerate(preset["boundaries"])]
+    if args.from_phase > len(phases):
+        sys.exit(f"--from-phase {args.from_phase}: there are only {len(phases)} phases")
     logdir = pathlib.Path(args.logdir).expanduser()
 
-    for phase in (1, 2, 3):
+    for phase, (steps, task, over) in enumerate(phases, 1):
         if phase < args.from_phase:
             continue
-        steps = preset["boundaries"][phase - 1]
         cmd = [
             sys.executable, str(MAIN),
             "--configs", preset["configs"], "size12m",
@@ -77,11 +113,12 @@ def main() -> int:
             "--seed", str(args.seed),
             # `run.steps` is cumulative, so each phase just raises the ceiling
             # and DreamerV3 resumes from the checkpoint already in the logdir.
-            "--run.steps", f"{steps:.0f}",
-            *PHASE_ARGS[phase],
+            "--run.steps", f"{steps * args.steps_scale:.0f}",
+            *over,
+            *(["--task", task] if task else []),
             *extra,
         ]
-        print(f"\n=== phase {phase} -> {steps:,.0f} steps ===\n{' '.join(cmd)}\n", flush=True)
+        print(f"\n=== phase {phase} -> {steps * args.steps_scale:,.0f} steps ===\n{' '.join(cmd)}\n", flush=True)
         if args.dry_run:
             continue
         rc = subprocess.call(cmd)

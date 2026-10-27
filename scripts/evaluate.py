@@ -621,12 +621,15 @@ def main() -> int:
     import ruamel.yaml as yaml
 
     task = yaml.YAML(typ="safe").load((logdir / "config.yaml").read_text())["task"]
-    trained_on = task.split("_", 1)[1]
-    track = args.track or trained_on
+    from skydreamer.hardware import full_hw, split_task
+
     # A run trained on our hardware (`hw_*`) is scored on our hardware: `--track big`
-    # means `hw_big` there, not the paper's drone on the big track.
-    if trained_on.startswith("hw_") and not track.startswith("hw_"):
-        track = "hw_" + track
+    # means `hw_big` there, not the paper's drone on the big track.  A run part-way
+    # through the fine-tuning stages (`hw2_*`) is scored on the full profile, the target.
+    trained_on = full_hw(task.split("_", 1)[1])
+    track = args.track or trained_on
+    if split_task(trained_on)[0] is not None:
+        track = full_hw(track if split_task(track)[0] else "hw_" + track)
 
     from skydreamer.embodied_env import SkyDreamer
 

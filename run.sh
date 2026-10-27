@@ -30,6 +30,13 @@
 #       the run's own config.
 #       Evaluate with ./run_test.sh, which scores such a run on the `physical`
 #       protocol (the airframe's whole footprint against the real 1.5 m opening).
+#
+#   ./run.sh --finetune <ckpt>      ~33 h   run 6
+#       Fine-tune a finished paper-drone agent -- world model, actor, critic and
+#       optimizer state, all of it -- on our drone and gate, switching our
+#       conditions on in stages (scripts/train.py, 9M steps).  <ckpt> is run 3's
+#       17M `ckpt` directory.  Fresh replay buffer, no demonstrations needed.
+#       Evaluate with ./run_test.sh as for --hw; ./run.sh --resume continues it.
 #   ./run.sh --setup-only ~10 min  install everything, train nothing
 #   ./run.sh --eval-only  ~10 min  re-evaluate the newest run (100 eps x 5 laps)
 #   ./run.sh --video      ~5 min   render the newest run flying (gif + figures)
@@ -65,6 +72,7 @@ HW_TAG=""
 PRESET="small"
 EXTRA=()
 WARM_CKPT=""
+FT_CKPT=""
 DEMOS="${SKYDREAMER_DEMOS:-}"
 DEMO_SCAN="${SKYDREAMER_DEMO_SCAN:-6000}"
 DEMO_KEEP="${SKYDREAMER_DEMO_KEEP:-800}"
@@ -73,6 +81,7 @@ for arg in "$@"; do
   if [ -n "${NEXT}" ]; then
     case "${NEXT}" in
       ckpt)  WARM_CKPT="${arg}" ;;
+      ft)    FT_CKPT="${arg}" ;;
       demos) DEMOS="${arg}" ;;
     esac
     NEXT=""; continue
@@ -81,6 +90,7 @@ for arg in "$@"; do
     --smoke)      MODE="smoke" ;;
     --collect-demos) MODE="demos" ;;
     --warm-start) NEXT="ckpt" ;;
+    --finetune)   NEXT="ft" ;;
     --demos)      NEXT="demos" ;;
     --resume)     MODE="resume" ;;
     --setup-only) MODE="setup" ;;
@@ -98,6 +108,12 @@ done
 # `--eval-only --track big` mean the same thing.
 TRACK_ARGS=()
 if [ "${PRESET}" = "big" ]; then TRACK_ARGS=(--track big); fi
+
+# A fine-tuning run is a run on our hardware, under its own name.
+FT=0
+if [ -n "${FT_CKPT}" ]; then
+  FT=1; HW=1; HW_TAG="-hwft"
+fi
 
 log() { printf '\n\033[1;36m==> %s\033[0m\n' "$*"; }
 # An aborted run leaves an empty logdir behind, and it sorts newest -- so pick
@@ -468,17 +484,26 @@ if [ "${MODE}" = "resume" ]; then
   # DreamerV3 rebuilds its config from the command line, not from the logdir, so
   # resuming a run trained on our hardware without --hw would quietly continue it
   # on the paper's drone and gate.  Read the task the run was started with instead.
-  if grep -q 'task: skydreamer_hw_' "${RUN_DIR}/config.yaml" 2>/dev/null && [ "${HW}" = "0" ]; then
+  # A fine-tuning run says so in a file of its own: its config.yaml names
+  # whichever stage it was in, and the last stage's task is the same as --hw's.
+  if [ -f "${RUN_DIR}/finetune" ]; then
+    FT=1; HW=1; HW_TAG="-hwft"
+    echo "this is a fine-tuning run -- resuming its stages (from $(cat "${RUN_DIR}/finetune"))"
+  elif grep -q 'task: skydreamer_hw' "${RUN_DIR}/config.yaml" 2>/dev/null && [ "${HW}" = "0" ]; then
     HW=1; HW_TAG="-hw"
     echo "this run was trained on our drone and gate -- resuming with --hw"
   fi
   # A resumed run restores its own checkpoint; a warm start would be overwritten
   # by it anyway, so drop one if it was passed.
   WARM_CKPT=""
+  FT_CKPT=""
 else
   RUN_DIR="${LOGROOT}/${PRESET}${HW_TAG}-$(date +%Y%m%d-%H%M%S)"
   log "Training -> ${RUN_DIR}"
-  if [ "${HW}" = "1" ]; then
+  if [ "${FT}" = "1" ]; then
+    [ -z "${WARM_CKPT}" ] || die "--finetune loads the whole agent; drop --warm-start"
+    echo "Fine-tuning ${FT_CKPT} on our drone and gate, in stages (scripts/train.py)."
+  elif [ "${HW}" = "1" ]; then
     if [ -n "${WARM_CKPT}" ]; then
       echo "Our drone and gate: hw_* task (docs/hardware.md); world model from ${WARM_CKPT}."
     else
@@ -529,8 +554,28 @@ if [ -n "${WARM_CKPT}" ]; then
   EXTRA+=(--run.from_checkpoint_regex '^(dyn|enc|dec|rew|con)/')
 fi
 
+# --- fine-tuning.  The whole agent, optimizer state included: nothing is
+# reinitialised, so the policy starts out flying the way it did on the paper's
+# drone.  Only the agent comes across -- the step counter starts at 0 and the
+# replay buffer empty.
+if [ -n "${FT_CKPT}" ]; then
+  [ -d "${FT_CKPT}" ] || die "no checkpoint directory at ${FT_CKPT}"
+  if [ -f "${FT_CKPT}/latest" ]; then
+    FT_CKPT="${FT_CKPT}/$(cat "${FT_CKPT}/latest")"
+  fi
+  [ -f "${FT_CKPT}/agent.pkl" ] || die "no agent.pkl under ${FT_CKPT}"
+  FT_CKPT="$(cd "${FT_CKPT}" && pwd)"
+  log "Fine-tuning the whole agent from ${FT_CKPT}"
+  printf '%s\n' "${FT_CKPT}" > "${RUN_DIR}/finetune"
+  EXTRA+=(--run.from_checkpoint "${FT_CKPT}")
+fi
+
 TRAIN_HW=()
-[ "${HW}" = "0" ] || TRAIN_HW=(--hw)
+if [ "${FT}" = "1" ]; then
+  TRAIN_HW=(--finetune)
+elif [ "${HW}" = "1" ]; then
+  TRAIN_HW=(--hw)
+fi
 
 # DreamerV3 never deletes replay chunks; without this the disk fills mid-run.
 "${PY}" "${ROOT}/scripts/prune_replay.py" --logdir "${RUN_DIR}" \

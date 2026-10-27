@@ -921,6 +921,52 @@ def test_hw_task_is_our_drone_and_gate_and_does_not_leak():
     assert NOMINAL["k_w"] == hardware.PAPER_K_W
 
 
+def test_finetune_stages_switch_our_conditions_on_in_order():
+    from skydreamer import hardware
+    from skydreamer.embodied_env import SkyDreamer
+    from skydreamer.params import NOMINAL
+
+    twr = lambda: NOMINAL["k_w"] * 4 * NOMINAL["w_max"] ** 2 / 9.81  # noqa: E731
+    # stage: (frame outer, thrust-to-weight, our window?)
+    want = {"hw1_": (2.4, hardware.NOMINAL_TWR, False), "hw2_": (2.1, hardware.NOMINAL_TWR, False),
+            "hw3_": (2.1, hardware.TWR_CENTRAL, False), "hw_": (2.1, hardware.TWR_CENTRAL, True)}
+    try:
+        for prefix, (outer, thrust, ours) in want.items():
+            cfg = SkyDreamer(prefix + "inverted_loop", max_steps=50, seed=1).cfg
+            assert abs(float(cfg.track.outer[0]) - outer) < 1e-5, prefix
+            assert cfg.cam_offset == hardware.CAM_FORWARD and cfg.fov == hardware.CAM_FOV, prefix
+            assert abs(twr() - thrust) < 1e-6, prefix
+            if ours:
+                assert cfg.d_g == (0.65, 0.60) and cfg.t_g == 0.40
+            else:   # the paper's: Table III's d_g, the track's own t_g
+                assert cfg.d_g is None and cfg.t_g is None, prefix
+    finally:
+        hardware.apply_dynamics(None)
+
+    # Every stage is scored on the full profile; a paper run keeps its track.
+    assert hardware.full_hw("hw2_inverted_loop") == "hw_inverted_loop"
+    assert hardware.full_hw("hw1_big") == "hw_big"
+    assert hardware.full_hw("inverted_loop") == "inverted_loop"
+
+
+def test_finetune_schedule_names_real_tasks():
+    import importlib.util
+    import pathlib
+
+    from skydreamer.embodied_env import TRACKS
+
+    path = pathlib.Path(__file__).resolve().parent.parent / "scripts" / "train.py"
+    spec = importlib.util.spec_from_file_location("train_script", path)
+    train = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(train)
+    steps = [s for s, _, _ in train.FINETUNE]
+    assert steps == sorted(steps) and len(set(steps)) == len(steps)
+    for _, stage, _ in train.FINETUNE:
+        assert f"{stage}_inverted_loop" in TRACKS
+    # It ends on the full profile, under the paper's phase-3 settings.
+    assert train.FINETUNE[-1][1] == "hw" and train.FINETUNE[-1][2] == train.PHASE_ARGS[3]
+
+
 def test_forward_camera_moves_the_viewpoint():
     import jax
     import jax.numpy as jnp

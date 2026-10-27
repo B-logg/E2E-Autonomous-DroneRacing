@@ -314,3 +314,51 @@ actor-critic fresh, the same hw demonstrations, and the thrust-to-weight the tea
 the randomised range either way):
 
     ./run.sh --hw --warm-start warm_hw --demos demos_hw
+
+### Run 5, and run 6: fine-tune run 3 instead
+
+Run 5 was stopped at ~5.0M steps. Its online episode length sat at 160-190 from 1M on
+(run 3 at the same points: 440 at 3M, 790 at 4M, 990 at 5M) and every one of 100
+`physical` episodes at 3.35M and 4.72M hit the ground: 89% pass three gates, then dive
+through gate 3 at 15-16 m/s and never pull out. Peak speed rose between the two
+evaluations (13.3 -> 15.0 m/s mean); the thrust-to-weight bands made no difference
+(5.5-7: 0%, 2.94 gates). Training on `hw_*` from a fresh actor-critic reached the same
+fast-and-crash optimum twice, with and without a warm world model.
+
+Run 6 therefore starts from the policy that already pulls out of the loop: run 3's whole
+17M agent -- world model, actor, critic, return normaliser and Adam state, nothing
+reinitialised -- fine-tuned on our hardware. The step counter starts at 0 and the replay
+buffer empty (only the agent is loaded); no demonstrations. Our conditions are switched on
+in stages (`skydreamer/hardware.py: HW_STAGES`, `scripts/train.py: FINETUNE`):
+
+| Stage | Steps | Task | Adds |
+|---|---|---|---|
+| 1 | 0 - 0.5M | `hw1_` | camera 10 cm forward, our FOV, 2.4 m gate frame |
+| 2 | 0.5 - 1.5M | `hw2_` | our 2.1 m frame (run 3 scored 0% on it untrained) |
+| 3 | 1.5 - 3M | `hw3_` | our thrust-to-weight, 4.10 |
+| 4 | 3 - 7M | `hw_` | our gate window (d_g 0.65 / 0.60, t_g 0.40) |
+| 5 | 7 - 9M | `hw_` | the paper's phase-3 settings (actent 1e-5, lr 2e-6) |
+
+Where each stage starts: run 3's 17M policy, untrained, 50 episodes x 1 lap, `paper`
+protocol on each stage's task -- hw1 76% (2.54 gates), hw2 18% (1.38; 35 of 50 hit a gate),
+hw3 6% (0.76). On the full profile under `physical`, 5% (1.30 gates, 20 episodes).
+
+Stages 1-4 use the paper's phase-2 settings (batch_length 256, lr 4e-5, actent 3e-4): the
+settings under which run 3 went from 73% to 91% between 6M and 11M without losing what it
+could fly. Starting at phase 3's tiny learning rate would leave the world model unable to
+learn the new images.
+
+    ./run.sh --finetune warm_ft
+
+`./run_test.sh` scores any stage on the full profile (`physical`), so the history is one
+curve towards the target. `./run.sh --resume` finds the `finetune` file in the run
+directory and resumes the stages.
+
+Each phase now ends with a checkpoint (`patches/informed_dreamer.patch`, `run/train.py`).
+DreamerV3 saves on a 900 s clock only, so before this every phase boundary threw away up to
+15 minutes of training (~70k steps) and the next phase redid them under its own settings.
+Runs 3-5 lost that at 8M and 13M; with stages of 0.5-1.5M it would have been a real share.
+
+Known costs. The buffer is never cleared between stages, so data from easier stages
+stays in it (about a third at 9M) -- in effect a wider randomisation. A stage change can
+cost success for a while; judge by the trend across a stage, not right after a switch.

@@ -55,6 +55,38 @@ HW_PROFILE = dict(gate_outer=GATE_OUTER, cam_offset=CAM_FORWARD, fov=CAM_FOV, tw
                   d_g=(0.65, 0.60), t_g=0.40)
 HW_PREFIX = "hw_"
 
+# Run 6 fine-tunes the paper-drone policy (run 3, 17M) instead of training on
+# `hw_` from scratch, which twice settled on diving through gate 3 too fast to
+# pull out (docs/deviations.md).  The conditions are switched on a few at a time
+# so the policy is never asked to relearn everything at once:
+#   hw1_  camera forward, our FOV, and a 2.4 m frame -- halfway from the paper's
+#         2.7 m to ours; run 3 scored 0% on the 2.1 m frame without training
+#   hw2_  our 2.1 m frame
+#   hw3_  our thrust-to-weight
+#   hw_   our gate window and tunnel (the full profile above)
+# `None` for d_g / t_g / twr means the paper's value.
+HW_STAGES = {
+    "hw1_": dict(HW_PROFILE, gate_outer=2.4, twr=None, d_g=None, t_g=None),
+    "hw2_": dict(HW_PROFILE, twr=None, d_g=None, t_g=None),
+    "hw3_": dict(HW_PROFILE, d_g=None, t_g=None),
+    HW_PREFIX: HW_PROFILE,
+}
+
+
+def split_task(task: str):
+    """`'hw2_big'` -> `(HW_STAGES['hw2_'], 'big')`; `'big'` -> `(None, 'big')`."""
+    for prefix, profile in HW_STAGES.items():
+        if task.startswith(prefix):
+            return profile, task[len(prefix):]
+    return None, task
+
+
+def full_hw(task: str) -> str:
+    """The track a run trained on `task` is scored on: any hw stage is scored on
+    the full profile (`hw2_big` -> `hw_big`); a paper run keeps its own track."""
+    profile, base = split_task(task)
+    return task if profile is None else HW_PREFIX + base
+
 
 def apply_dynamics(twr: float | None) -> None:
     """Set the process-wide nominal thrust-to-weight (None = the paper's).

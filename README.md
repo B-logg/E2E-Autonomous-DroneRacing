@@ -86,6 +86,10 @@
 추력대중량비 4.1)으로 학습하고, `./run_test.sh`는 이렇게 학습한 결과를 `physical` 프로토콜로 평가합니다.
 자세한 내용은 [`docs/hardware.md`](docs/hardware.md)를 보세요.
 
+`./run.sh --finetune <ckpt>`는 위의 17M 에이전트 전체를 이 조건으로 단계적으로 미세조정합니다
+(카메라·FOV → 2.1 m 프레임 → 추력대중량비 → 통과 판정 창, 9M 스텝).
+단계 구성과 이유는 [`docs/deviations.md`](docs/deviations.md)에 있습니다.
+
 ### 참고
 - SkyDreamer (https://arxiv.org/abs/2510.14783)
 - MonoRace (https://arxiv.org/abs/2601.15222)
