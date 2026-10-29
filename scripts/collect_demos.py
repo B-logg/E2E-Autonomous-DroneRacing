@@ -144,6 +144,9 @@ def main():
                     help="our drone and gate (docs/hardware.md): fly the hw_* task, so the "
                          "demonstrations show 2.1 m gates, the forward camera and our "
                          "thrust-to-weight")
+    ap.add_argument("--task", default=None,
+                    help="fly this task instead of the config's, e.g. hw_team (our real track "
+                         "and gate) -- the task name without the `skydreamer_` prefix")
     ap.add_argument("--out", type=pathlib.Path, default=pathlib.Path("demos"))
     ap.add_argument("--episodes", type=int, default=2000)
     ap.add_argument("--min-gates", type=int, default=5,
@@ -158,9 +161,15 @@ def main():
                          "it instead of seeing a zero, which is the whole point.")
     ap.add_argument("--max-keep", type=int, default=0,
                     help="stop once this many episodes have been kept (0 = no limit)")
-    ap.add_argument("--v-nom", type=float, default=2.5)
+    ap.add_argument("--v-nom", type=float, default=None,
+                    help="cruise speed, m/s.  Default 2.5 for the paper's tracks; 2.0 for "
+                         "`team`, where most failures are in the 1.5 m split-S: 512 seeds "
+                         "gave 7.2% clean laps at 2.5 and 18.8% at 2.0 (17.0% for 2 laps)")
     ap.add_argument("--lookahead", type=float, default=0.8)
-    ap.add_argument("--alt-floor", type=float, default=1.8)
+    ap.add_argument("--alt-floor", type=float, default=None,
+                    help="altitude the controller climbs back to, m.  Default 1.8 for the "
+                         "paper's tracks (gates at 1.35 m); 0.6 for `team`, whose floor-"
+                         "standing gates are centred at 0.75 m")
     ap.add_argument("--k-vel", type=float, default=3.5)
     ap.add_argument("--max-tilt", type=float, default=35.0)
     ap.add_argument("--seed", type=int, default=0)
@@ -192,7 +201,10 @@ def main():
     args.out.mkdir(parents=True, exist_ok=True)
     # make_replay puts the directory under config.logdir, so point that here.
     config = config.update({"logdir": str(args.out.resolve())})
-    if args.hw and not config.task.split("_", 1)[1].startswith("hw_"):
+    if args.task:
+        config = config.update({"task": f"skydreamer_{args.task}"})
+        print(f"task {config.task}")
+    elif args.hw and not config.task.split("_", 1)[1].startswith("hw_"):
         head, tail = config.task.split("_", 1)
         config = config.update({"task": f"{head}_hw_{tail}"})
         print(f"hardware profile: task {config.task}")
@@ -214,6 +226,13 @@ def main():
     # gate frame, and `NOMINAL` (read just below) was rescaled by the same build.
     track = env.cfg.track
     n_gates = track.n_gates
+    from skydreamer import hardware
+    base = hardware.split_task(config.task.split("_", 1)[1])[1]
+    if args.alt_floor is None:
+        args.alt_floor = 0.6 if base in trk.ROOMS else 1.8
+    if args.v_nom is None:
+        args.v_nom = 2.0 if base in trk.ROOMS else 2.5
+    print(f"altitude floor {args.alt_floor} m, cruise {args.v_nom} m/s")
 
     r = ep.reference(track, NOMINAL, margin=0.35, v_cap=args.v_nom * 1.4,
                      iters=1, omega_max=1e9)

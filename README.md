@@ -94,6 +94,8 @@
 개구부 1.2 m / 바깥 1.5 m, `skydreamer/track.py`의 `TEAM_TRACK`)으로 미세조정합니다
 (우리 게이트 → 우리 트랙 → 실제 판정 창 → phase-3, 10M 스텝). `./run_test.sh`는 이 학습을 우리 트랙(`team`)에서만 1랩·3랩으로 평가하고(big 트랙 없음),
 학습 중 1M마다 체크포인트가 `<run>/snapshots/`에 따로 남습니다.
+4M 점검(우리 트랙 1랩 시뮬레이션 완주 30%)에 미달하면 우리 트랙 데모를 학습 중인 run에 넣습니다:
+`./run.sh --collect-demos --team` 후 `./run.sh --resume --demos demos_team`.
 
 ### 참고
 - SkyDreamer (https://arxiv.org/abs/2510.14783)

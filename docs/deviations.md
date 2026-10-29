@@ -414,6 +414,20 @@ time (otherwise look at the split-S before going on); at 7M, 60% in the sim (run
 71% before its phase 3). Every run now keeps its checkpoint each 1M in `<run>/snapshots/`
 (`scripts/milestone_snapshots.py`), since run 6's 7M was lost for want of one.
 
+Fallback: demonstrations on our track. Runs 4 and 5 had demonstrations and still failed;
+run 6 had none and worked, so run 7 starts without. If the 4M check fails they are the first
+thing to add, into the running run's buffer:
+
+    ./run.sh --collect-demos --team          # -> demos_team, CPU, minutes
+    ./run.sh --resume --demos demos_team
+
+The controller (`scripts/collect_demos.py --task hw_team`) flies the spline through the
+gate centres. Screened from the start gate, 512 seeds: at 2.5 m/s 7.2% finish a lap clean,
+almost all failures on the way from G2 to G3 (the split-S, path radius 0.41 m); at 2.0 m/s
+18.8% (17.0% two laps), the default for `team`. Widening the path (tangent scale 2-3, lead
+0.3) did not help, and 1.5 m/s is too slow to fit two laps in 2000 steps. Mixed training
+starts, as `--collect-demos` screens them, keep about 11%: 4000 seeds give ~400 episodes.
+
 Known risks. How fast a fine-tune learns a new layout is the open question. The split-S
 radius is 0.75 m against the old 1.35 m: at the bottom of the loop, (TWR - 1) g = v^2 / r
 allows ~4.8 m/s at TWR 4.1, where run 6 flies 10-14 m/s. Below TWR 3.5 run 6 already

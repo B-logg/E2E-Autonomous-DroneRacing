@@ -43,6 +43,10 @@
 #       real window, then the phase-3 fine-tune (scripts/train.py, 10M steps).
 #       ./run_test.sh scores it on our track, 1 and 3 laps; ./run.sh --resume
 #       continues it.
+#       If its 4M check fails (docs/deviations.md), demonstrations on our track are
+#       the fallback, added to the running run's buffer:
+#         ./run.sh --collect-demos --team          -> ./demos_team (~5 min, CPU)
+#         ./run.sh --resume --demos demos_team
 #
 #   Every training run also keeps a copy of its checkpoint every 1M steps in
 #   <run>/snapshots/step_<N>/ (SKYDREAMER_SNAPSHOT_EVERY; 0 turns it off), so any
@@ -141,8 +145,9 @@ latest_run() {
   done
 }
 die() { printf '\n\033[1;31mERROR: %s\033[0m\n' "$*" >&2; exit 1; }
-if [ "${TEAM}" = "1" ] && [ "${FT}" = "0" ] && [ "${MODE}" != "resume" ]; then
-  die "--team is a fine-tuning schedule: ./run.sh --finetune <run 6 ckpt> --team"
+if [ "${TEAM}" = "1" ] && [ "${FT}" = "0" ] && [ "${MODE}" != "resume" ] && [ "${MODE}" != "demos" ]; then
+  die "--team is a fine-tuning schedule: ./run.sh --finetune <run 6 ckpt> --team
+     (or ./run.sh --collect-demos --team for demonstrations on our track)"
 fi
 
 # --------------------------------------------------------------------------
@@ -474,7 +479,11 @@ if [ "${MODE}" = "demos" ]; then
   echo "The controller completes a 2000-step episode about one time in six, so"
   echo "this screens thousands of seeds and keeps the ones that survive."
   HW_ARGS=()
-  if [ "${HW}" = "1" ]; then
+  if [ "${TEAM}" = "1" ]; then
+    # our real track and gate, the task run 7 ends on (hw_team, window 0.50)
+    HW_ARGS=(--task hw_team)
+    OUT="${EXTRA_OUT:-${ROOT}/demos_team}"
+  elif [ "${HW}" = "1" ]; then
     HW_ARGS=(--hw)
     OUT="${EXTRA_OUT:-${ROOT}/demos_hw}"
   fi
@@ -485,7 +494,11 @@ if [ "${MODE}" = "demos" ]; then
       "${EXTRA[@]+"${EXTRA[@]}"}"
   log "Done"
   echo "  demonstrations  ${OUT}/replay"
-  echo "  seed them with  ./run.sh ${HW_TAG:+--hw }--demos ${OUT}"
+  if [ "${TEAM}" = "1" ]; then
+    echo "  add them to the running run 7 with  ./run.sh --resume --demos ${OUT}"
+  else
+    echo "  seed them with  ./run.sh ${HW_TAG:+--hw }--demos ${OUT}"
+  fi
   exit 0
 fi
 
@@ -554,11 +567,16 @@ if [ -n "${DEMOS}" ]; then
   log "Seeding ${N} demonstration chunks into the replay buffer"
   mkdir -p "${RUN_DIR}/replay"
   cp "${SRC}"/*.npz "${RUN_DIR}/replay/"
-  if [ -f "${SRC}/.demo-chunks" ]; then
-    cp "${SRC}/.demo-chunks" "${RUN_DIR}/replay/"
-  else
-    (cd "${SRC}" && ls *.npz) > "${RUN_DIR}/replay/.demo-chunks"
-  fi
+  # Appended, not copied over: `--resume --demos` adds to a run that may already
+  # protect demonstrations of its own.
+  # (if-blocks, not `&&`: a false test would end the group non-zero and set -e
+  # with pipefail would stop the script there.)
+  MANIFEST="${RUN_DIR}/replay/.demo-chunks"
+  {
+    if [ -f "${SRC}/.demo-chunks" ]; then cat "${SRC}/.demo-chunks"; else (cd "${SRC}" && ls *.npz); fi
+    if [ -f "${MANIFEST}" ]; then cat "${MANIFEST}"; fi
+  } | sort -u > "${MANIFEST}.new"
+  mv "${MANIFEST}.new" "${MANIFEST}"
   echo "  $(du -sh "${RUN_DIR}/replay" | cut -f1), protected from pruning"
 fi
 
