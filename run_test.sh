@@ -13,6 +13,10 @@
 #                                  physical = the airframe's whole footprint against our real
 #                                             1.5 m opening (docs/hardware.md); for --hw runs
 #   ./run_test.sh --episodes 50    fewer episodes (default 100, as Table IV)
+#   ./run_test.sh --laps 3         laps per episode (default 5; repeatable)
+#
+# A run 7 run (`./run.sh --finetune <ckpt> --team`) is scored on our real track only
+# (`team`), 1 and 3 laps -- no big track, no old layout.
 #   ./run_test.sh --watch 3600     repeat every hour, building a history
 #   ./run_test.sh --history        print the history so far and exit
 #
@@ -40,7 +44,7 @@ DV3_DIR="${ROOT}/third_party/dreamerv3"
 
 VIDEO=1
 EPISODES=100
-LAPS=5
+LAPS=()
 WATCH=0
 KEEP=3
 TRACKS=()
@@ -54,7 +58,7 @@ while [ $# -gt 0 ]; do
     --big)       TRACKS+=("big") ;;
     --protocol)  PROTOCOLS+=("$2"); shift ;;
     --episodes)  EPISODES="$2"; shift ;;
-    --laps)      LAPS="$2"; shift ;;
+    --laps)      LAPS+=("$2"); shift ;;
     --watch)     WATCH="$2"; shift ;;
     --history)   HISTORY_ONLY=1 ;;
     --keep)      KEEP="$2"; shift ;;
@@ -62,7 +66,6 @@ while [ $# -gt 0 ]; do
   esac
   shift
 done
-[ ${#TRACKS[@]} -gt 0 ] || TRACKS=(inverted_loop big)
 
 log() { printf '\n\033[1;36m==> %s\033[0m\n' "$*"; }
 die() { printf '\n\033[1;31mERROR: %s\033[0m\n' "$*" >&2; exit 1; }
@@ -96,6 +99,14 @@ if grep -q 'task: skydreamer_hw' "${RUN_DIR}/config.yaml"; then
   echo "run trained on our drone and gate -> protocol: ${PROTOCOLS[*]}"
 fi
 [ ${#PROTOCOLS[@]} -gt 0 ] || PROTOCOLS=(paper)
+if [ "$(cat "${RUN_DIR}/finetune_schedule" 2>/dev/null)" = "team" ]; then
+  # Run 7 is trained and judged on our track alone.
+  [ ${#TRACKS[@]} -gt 0 ] || TRACKS=(team)
+  [ ${#LAPS[@]} -gt 0 ] || LAPS=(1 3)
+  echo "run 7 (our real track) -> tracks: ${TRACKS[*]}, laps: ${LAPS[*]}"
+fi
+[ ${#TRACKS[@]} -gt 0 ] || TRACKS=(inverted_loop big)
+[ ${#LAPS[@]} -gt 0 ] || LAPS=(5)
 EVAL_ROOT="${RUN_DIR}/eval"
 HISTORY="${EVAL_ROOT}/history.jsonl"
 
@@ -111,6 +122,8 @@ for r in rows:
     # Rows written before `--protocol` existed were all the 70/30 mixture.
     r.setdefault("protocol", "mixed")
     r["label"] = r["track"] if r["protocol"] == "paper" else f'{r["track"]}/{r["protocol"]}'
+    if r.get("laps", 5) != 5:   # rows written before laps were recorded are 5-lap
+        r["label"] += f'/{r["laps"]}lap'
 tracks = sorted({r["label"] for r in rows})
 print(f"\n  {'step':>12}  " + "  ".join(f"{t:>28}" for t in tracks))
 print(f"  {'':>12}  " + "  ".join(f"{'success  gates  diverged':>28}" for _ in tracks))
@@ -153,12 +166,18 @@ run_once() {
 
   for track in "${TRACKS[@]}"; do
    for proto in "${PROTOCOLS[@]}"; do
-    log "step ${STEP}: scoring ${track} [${proto}] (${EPISODES} episodes x ${LAPS} laps)"
+    for laps in "${LAPS[@]}"; do
+    # 5 laps keeps the file names every earlier run has; any other count is tagged.
+    TAG=()
+    [ "${laps}" = "5" ] || TAG=(--tag "_${laps}lap")
+    log "step ${STEP}: scoring ${track} [${proto}] (${EPISODES} episodes x ${laps} laps)"
     "${PY}" "${ROOT}/scripts/evaluate.py" --logdir "${SNAP}" --track "${track}" \
-        --episodes "${EPISODES}" --laps "${LAPS}" --protocol "${proto}" || {
+        --episodes "${EPISODES}" --laps "${laps}" --protocol "${proto}" \
+        ${TAG[@]+"${TAG[@]}"} || {
       printf '\033[1;31m  scoring %s [%s] failed -- continuing\033[0m\n' "${track}" "${proto}" >&2
       continue
     }
+    done
    done
     if [ "${VIDEO}" = "1" ]; then
       log "step ${STEP}: rendering ${track}"
@@ -181,6 +200,7 @@ with hist.open("a") as f:
             "step": step,
             "track": d["track"],
             "protocol": d.get("protocol", "mixed"),
+            "laps": d.get("laps", 5),
             "success_rate": d["success_rate"],
             "mean_gates": d["mean_gates_passed"],
             "diverged_frac": term.get("diverged", 0) / total if term else None,

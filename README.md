@@ -90,6 +90,11 @@
 (카메라·FOV → 2.1 m 프레임 → 추력대중량비 → 통과 판정 창, 9M 스텝).
 단계 구성과 이유는 [`docs/deviations.md`](docs/deviations.md)에 있습니다.
 
+`./run.sh --finetune <ckpt> --team`은 6차 9M 에이전트를 실제 레이싱 트랙(8 × 11 × 3.5 m 방, 게이트 4개,
+개구부 1.2 m / 바깥 1.5 m, `skydreamer/track.py`의 `TEAM_TRACK`)으로 미세조정합니다
+(우리 게이트 → 우리 트랙 → 실제 판정 창 → phase-3, 10M 스텝). `./run_test.sh`는 이 학습을 우리 트랙(`team`)에서만 1랩·3랩으로 평가하고(big 트랙 없음),
+학습 중 1M마다 체크포인트가 `<run>/snapshots/`에 따로 남습니다.
+
 ### 참고
 - SkyDreamer (https://arxiv.org/abs/2510.14783)
 - MonoRace (https://arxiv.org/abs/2601.15222)

@@ -11,6 +11,7 @@ from __future__ import annotations
 import numpy as np
 
 from .params import NOMINAL
+from .track import TEAM_INNER, TEAM_OUTER
 
 # --- gate (given) ----------------------------------------------------------
 GATE_INNER = 1.5      # m, clear opening edge length
@@ -55,6 +56,14 @@ HW_PROFILE = dict(gate_outer=GATE_OUTER, cam_offset=CAM_FORWARD, fov=CAM_FOV, tw
                   d_g=(0.65, 0.60), t_g=0.40)
 HW_PREFIX = "hw_"
 
+# Tracks laid out with our own gates (track.TEAM_TRACK: 1.2 m opening, 1.5 m
+# outer) keep that frame under every hw stage rather than `gate_outer`, and their
+# centre-of-mass window comes from their opening, with the same airframe reach and
+# the same train leniency as `HW_PROFILE`: eval 0.60 - 0.15 = 0.45, train 0.50.
+# It applies with or without an hw prefix -- Table III's 0.8 / 1.0 m would be
+# wider than the opening itself.
+OWN_GATE_D_G = {"team": (0.50, 0.45)}
+
 # Run 6 fine-tunes the paper-drone policy (run 3, 17M) instead of training on
 # `hw_` from scratch, which twice settled on diving through gate 3 too fast to
 # pull out (docs/deviations.md).  The conditions are switched on a few at a time
@@ -64,11 +73,19 @@ HW_PREFIX = "hw_"
 #   hw2_  our 2.1 m frame
 #   hw3_  our thrust-to-weight
 #   hw_   our gate window and tunnel (the full profile above)
+#
+# Run 7 fine-tunes run 6 onto our real track (track.TEAM_TRACK), and run 6's
+# policy scored 15% with our real gate on its own layout and 0% on our layout.
+# So the gate comes first, on the layout it knows, then the layout:
+#   hwg_  the full profile, but our real gate (1.2 m opening, 1.5 m outer) on any
+#         layout, and a window between the two gates': train 0.60, eval 0.45 (the
+#         real one).  `hwg_inverted_loop` then `hwg_team`, before `hw_team`'s 0.50.
 # `None` for d_g / t_g / twr means the paper's value.
 HW_STAGES = {
     "hw1_": dict(HW_PROFILE, gate_outer=2.4, twr=None, d_g=None, t_g=None),
     "hw2_": dict(HW_PROFILE, twr=None, d_g=None, t_g=None),
     "hw3_": dict(HW_PROFILE, d_g=None, t_g=None),
+    "hwg_": dict(HW_PROFILE, gate_inner=TEAM_INNER, gate_outer=TEAM_OUTER, d_g=(0.60, 0.45)),
     HW_PREFIX: HW_PROFILE,
 }
 
@@ -83,9 +100,13 @@ def split_task(task: str):
 
 def full_hw(task: str) -> str:
     """The track a run trained on `task` is scored on: any hw stage is scored on
-    the full profile (`hw2_big` -> `hw_big`); a paper run keeps its own track."""
+    the full profile (`hw2_big` -> `hw_big`); a paper run keeps its own track.
+    `hwg_` is kept: its gate is already the real one, and its eval window is the
+    real 0.45 m, while `hw_inverted_loop` would put the 2.1 m gate back."""
     profile, base = split_task(task)
-    return task if profile is None else HW_PREFIX + base
+    if profile is None or task.startswith("hwg_"):
+        return task
+    return HW_PREFIX + base
 
 
 def apply_dynamics(twr: float | None) -> None:

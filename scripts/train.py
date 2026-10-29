@@ -23,11 +23,20 @@ invocation resuming from the previous phase's checkpoint in the same logdir.
     Stages 1-4 use the paper's phase-2 settings.  The agent to start from is
     passed as --run.from_checkpoint (./run.sh --finetune does this).
 
+  --finetune team (run 7, 10M steps; docs/deviations.md)
+    fine-tune run 6 onto our real track and gate (track.TEAM_TRACK):
+    stage 1   0   -> 1.5M  hwg_inverted_loop: our real gate on the layout it knows
+    stage 2   1.5 -> 4M    hwg_team: our track, window 0.60
+    stage 3   4   -> 7M    hw_team:  our track, window 0.50
+    stage 4   7   -> 10M   hw_team, the paper's phase-3 fine-tune settings
+    (./run.sh --finetune <ckpt> --team)
+
 Usage:
   python scripts/train.py --logdir ~/logdir/sd/run1
   python scripts/train.py --logdir ~/logdir/sd/big1 --preset big
   python scripts/train.py --logdir ~/logdir/sd/run1 --from-phase 2   # resume
   python scripts/train.py --logdir ~/logdir/sd/ft1 --finetune --run.from_checkpoint <ckpt>
+  python scripts/train.py --logdir ~/logdir/sd/ft2 --finetune team --run.from_checkpoint <ckpt>
 """
 
 from __future__ import annotations
@@ -59,27 +68,41 @@ PHASE_ARGS = {
 # Only the agent is loaded from the checkpoint, not its step counter, so these
 # count fine-tuning steps from 0.  Phase 2's settings are the ones run 3 kept
 # improving under (73% -> 91% between 6M and 11M) without forgetting what it
-# could already fly.
-FINETUNE = [
-    (0.5e6, "hw1", PHASE_ARGS[2]),
-    (1.5e6, "hw2", PHASE_ARGS[2]),
-    (3.0e6, "hw3", PHASE_ARGS[2]),
-    (7.0e6, "hw", PHASE_ARGS[2]),
-    (9.0e6, "hw", PHASE_ARGS[3]),
-]
+# could already fly.  They also put the exploration entropy back to 3e-4, which a
+# new layout needs: the agent being loaded ended on phase 3's 1e-5.
+FINETUNE = {
+    # run 6: run 3's paper-drone agent onto our drone, 5% -> 69% (physical, 5 laps)
+    "hw": [
+        (0.5e6, "hw1_inverted_loop", PHASE_ARGS[2]),
+        (1.5e6, "hw2_inverted_loop", PHASE_ARGS[2]),
+        (3.0e6, "hw3_inverted_loop", PHASE_ARGS[2]),
+        (7.0e6, "hw_inverted_loop", PHASE_ARGS[2]),
+        (9.0e6, "hw_inverted_loop", PHASE_ARGS[3]),
+    ],
+    # run 7: run 6 onto our real track.  Run 6 scored 15% with our gate on its own
+    # layout and 0% on our layout, so the gate goes first; and run 6's biggest gain
+    # (33% -> 66%) came at its switch to phase 3, so that stage gets 3M again.
+    "team": [
+        (1.5e6, "hwg_inverted_loop", PHASE_ARGS[2]),
+        (4.0e6, "hwg_team", PHASE_ARGS[2]),
+        (7.0e6, "hw_team", PHASE_ARGS[2]),
+        (10.0e6, "hw_team", PHASE_ARGS[3]),
+    ],
+}
 
 
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--logdir", required=True)
     ap.add_argument("--preset", default="small", choices=sorted(PRESETS))
-    ap.add_argument("--from-phase", type=int, default=1, choices=(1, 2, 3, 4, 5),
-                    help="1-3, or 1-5 with --finetune")
+    ap.add_argument("--from-phase", type=int, default=1,
+                    help="1-3, or a stage of the --finetune schedule")
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--hw", action="store_true",
                     help="train on our drone and gate (docs/hardware.md): the hw_* task")
-    ap.add_argument("--finetune", action="store_true",
-                    help="fine-tune a finished agent on our hardware in stages (run 6)")
+    ap.add_argument("--finetune", nargs="?", const="hw", default=None, choices=sorted(FINETUNE),
+                    help="fine-tune a finished agent in stages: hw (run 6, our drone) "
+                         "or team (run 7, our real track)")
     ap.add_argument("--steps-scale", type=float, default=1.0,
                     help="multiply every phase boundary (testing the phase chain end to end)")
     ap.add_argument("--dry-run", action="store_true")
@@ -94,12 +117,12 @@ def main() -> int:
     if args.finetune:
         if args.preset != "small":
             sys.exit("--finetune is defined for the small preset only")
-        phases = [(steps, f"skydreamer_{stage}_{track}", over) for steps, stage, over in FINETUNE]
+        phases = [(steps, f"skydreamer_{task}", over) for steps, task, over in FINETUNE[args.finetune]]
     else:
         task = f"skydreamer_hw_{track}" if args.hw else None
         phases = [(steps, task, PHASE_ARGS[i + 1])
                   for i, steps in enumerate(preset["boundaries"])]
-    if args.from_phase > len(phases):
+    if not 1 <= args.from_phase <= len(phases):
         sys.exit(f"--from-phase {args.from_phase}: there are only {len(phases)} phases")
     logdir = pathlib.Path(args.logdir).expanduser()
 

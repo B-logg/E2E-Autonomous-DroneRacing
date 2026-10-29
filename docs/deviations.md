@@ -362,3 +362,60 @@ Runs 3-5 lost that at 8M and 13M; with stages of 0.5-1.5M it would have been a r
 Known costs. The buffer is never cleared between stages, so data from easier stages
 stays in it (about a third at 9M) -- in effect a wider randomisation. A stage change can
 cost success for a while; judge by the trend across a stage, not right after a switch.
+
+### Run 6's result, and run 7: our real track
+
+Run 6 finished at 9M: `physical`, 5 laps, 69% (73.5% over 200 episodes), 85% in the sim
+alone, 79% in the thrust-to-weight band of the real airframe (3.5-4.5). Most of it came at
+the switch to phase 3 at 7M: online episode length went 676 -> 1044 between the 6.5M and
+7.0M bins, and success 33% (5M) -> 66% (7.8M), with the airframe's worst point through the
+opening p90 0.74 -> 0.55 m. Exploration noise, not the window, was what made it miss.
+7.8M -> 9M is within the noise of 100 episodes: it had converged.
+
+The real track is fixed (`track.TEAM_TRACK`, from the team's `gate_map.yaml`): 4 gates in
+an 8 x 11 x 3.5 m room, 1.2 m opening, 1.5 m outer, G2 standing on G3 for a 1.5 m-diameter
+split-S. Run 6's 9M policy untrained on it, 20 episodes x 1 lap, `physical`:
+
+| Layout | Gate | Success | In the sim | Decoded position error, first 20 steps |
+|---|---|---|---|---|
+| inverted loop | 2.1 / 1.5 m (its own) | 90% | 100% | 0.3 m |
+| inverted loop | 1.5 / 1.2 m (ours) | 15% | 30% | 1.0 m |
+| ours | 2.1 / 1.5 m | 0% | 0% | 6.7 m |
+| ours | ours | 0% | 0% | 6.8 m |
+| ours, rotated and shifted onto the old split-S | ours | 0% | 0% | 12 m |
+
+A new layout fails at take-off (0.2 s), even with the coordinates lined up, and the
+world model's position estimate is metres off from the first step: trained on one
+track, the flight plan has only ever taken three values. The big track (`hw_big`)
+scored 0% at every run 6 checkpoint the same way. So run 7 trains on our track.
+
+It fine-tunes run 6's whole 9M agent (`./run.sh --finetune <ckpt> --team`; schedule
+`scripts/train.py: FINETUNE["team"]`), the recipe that took run 6 from 5% to 69% where
+training our drone from scratch failed twice:
+
+| Stage | Steps | Task | Why |
+|---|---|---|---|
+| 1 | 0 - 1.5M | `hwg_inverted_loop` | our gate on the layout it knows (starts at 15%) |
+| 2 | 1.5 - 4M | `hwg_team` | our layout (starts at 0%), window 0.60 |
+| 3 | 4 - 7M | `hw_team` | the real window, train 0.50 (eval 0.45 = 0.60 - 0.15) |
+| 4 | 7 - 10M | `hw_team` | phase-3 settings, run 6's biggest gain |
+
+Stages 1-3 use phase-2 settings, which also put the entropy back to 3e-4: the 9M agent
+ended on phase 3's 1e-5, too little to explore a new layout. The window narrows in two
+steps because run 6 dipped when its window narrowed at 3M. Leaving the room (walls, or the
+3.5 m ceiling 0.5 m above G2) ends the episode; Table III's start 2-4 m before the gate is
+pulled 0.3 m inside the room and off the floor.
+
+Run 7 is evaluated on our track only (`./run_test.sh` defaults to `team`, 1 and 3 laps;
+no big track). Checks, against `physical` on `team`: stage 1 is judged by its training
+log (episode length recovering, as run 6's did after each switch), since the track
+there is not ours; at 4M our track should finish one lap in the sim at least 30% of the
+time (otherwise look at the split-S before going on); at 7M, 60% in the sim (run 6 had
+71% before its phase 3). Every run now keeps its checkpoint each 1M in `<run>/snapshots/`
+(`scripts/milestone_snapshots.py`), since run 6's 7M was lost for want of one.
+
+Known risks. How fast a fine-tune learns a new layout is the open question. The split-S
+radius is 0.75 m against the old 1.35 m: at the bottom of the loop, (TWR - 1) g = v^2 / r
+allows ~4.8 m/s at TWR 4.1, where run 6 flies 10-14 m/s. Below TWR 3.5 run 6 already
+succeeded only 51% of the time.
+

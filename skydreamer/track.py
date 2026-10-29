@@ -351,3 +351,40 @@ def ladder_inverted_loop() -> Track:
     paper's simulation results come from, and section III-B trains it with
     t_g = 0.3 m rather than Table III's 0.8 m."""
     return make_track(LADDER_INVERTED_LOOP, inner=1.5, outer=2.7)
+
+
+# --------------------------------------------------------------------------
+# Our track -- the room the real drone flies in
+# --------------------------------------------------------------------------
+#
+# [MAP] The team's gate_map.yaml (2026-10-29), which the layout preview is drawn
+# from: room 8 x 11 x 3.5 m, gate outer 1.5 m, opening 1.2 m.  Gate x/y/z is the
+# centre, yaw the passage normal CCW from +X.  G1, G3 and G4 stand on the floor
+# (centre 0.75 m); G2 stands on G3, flown the other way -- a 1.5 m-diameter split-S.
+#
+# The map is right-handed with Z up.  Converted to the simulator's NED: x = Y_map,
+# y = X_map, z = -Z_map, yaw = 90 deg - yaw_map.  A plain z flip instead would
+# mirror the track, and a policy trained on the mirror turns the wrong way.
+TEAM_INNER, TEAM_OUTER = 1.2, 1.5
+TEAM_TRACK = [
+    # map:  (X,    Y,    Z,    yaw)
+    (-1.0, -2.0, -0.75, 0.0),     # G1 (-2.0, -1.0, 0.75,  90)
+    (4.0, 0.0, -2.25, 0.0),       # G2 ( 0.0,  4.0, 2.25,  90): on top of G3
+    (4.0, 0.0, -0.75, 180.0),     # G3 ( 0.0,  4.0, 0.75, 270): back the other way
+    (-1.0, 2.0, -0.75, 180.0),    # G4 ( 2.0, -1.0, 0.75, 270): then a U-turn to G1
+]
+# Walls and ceiling, NED: (x_lo, x_hi, y_lo, y_hi, ceiling altitude).  Map X -4..4,
+# Y -4..7, Z 0..3.5.  The paper's tracks have no room, hence a separate table.
+ROOMS = {"team": (-4.0, 7.0, -4.0, 4.0, 3.5)}
+
+
+def team_track() -> Track:
+    """Our 4-gate room track; real gates, no virtual ones."""
+    return make_track(TEAM_TRACK, inner=TEAM_INNER, outer=TEAM_OUTER)
+
+
+def left_room(p_w: jax.Array, room) -> jax.Array:
+    """True outside the walls or above the ceiling (the floor is ground_collision's)."""
+    x_lo, x_hi, y_lo, y_hi, ceiling = room
+    x, y = p_w[..., 0], p_w[..., 1]
+    return (x < x_lo) | (x > x_hi) | (y < y_lo) | (y > y_hi) | (-p_w[..., 2] > ceiling)

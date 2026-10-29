@@ -80,6 +80,15 @@ NOTES = {
         "out-of-distribution test of the layout, and changing the gates too "
         "would also change the mask, so a failure could not be attributed.",
     ],
+    "team": [
+        "Our room track: 4 real gates in an 8 x 11 x 3.5 m room. Trained as hw_team.",
+        "[MAP] the team's gate_map.yaml (2026-10-29), converted from its Z-up "
+        "frame (x = Y_map, y = X_map, z = -Z_map, yaw = 90 - yaw_map). G1, G3, "
+        "G4 stand on the floor; G2 stands on G3 and is flown the other way.",
+        "Gate window d_g is 0.50 train / 0.45 eval (hardware.OWN_GATE_D_G), not "
+        "the Table III values above; leaving the room (x -4..7, y -4..4, "
+        "ceiling 3.5 m) ends the episode.",
+    ],
 }
 
 

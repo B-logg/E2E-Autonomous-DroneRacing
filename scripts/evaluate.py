@@ -178,7 +178,8 @@ def rollout(agent, cfg_env, episodes: int, laps: int, seed: int, chunk: int = 64
 EARLY_STEPS = 20
 
 # EnvState.term_cause
-CAUSES = {0: "survived", 1: "hit a gate", 2: "hit the ground", 3: "diverged"}
+CAUSES = {0: "survived", 1: "hit a gate", 2: "hit the ground", 3: "diverged",
+          4: "hit a wall or the ceiling"}
 
 
 def _agent_obs(obs: dict) -> dict:
@@ -548,7 +549,7 @@ def report(name: str, s: dict, protocol: str = "paper") -> str:
         w = ph["real_gate_worst_point_offset_m"]
         if w:
             L.append(f"{'worst point offset':<20}" + "   ".join(f"p{q} {v:.3f}" for q, v in w.items())
-                     + "   (opening half-width 0.75)")
+                     + f"   (opening half-width {ph.get('opening_half_width_m', 0.75):g})")
 
     d = s.get("diagnostics")
     if d:
@@ -650,6 +651,11 @@ def main() -> int:
     records, decode = rollout(agent, cfg_env, args.episodes, args.laps, args.seed,
                               force_d_g=force_d_g, physical=PROTOCOLS[args.protocol].get("physical", False))
     summary = summarize(records, decode, env.cfg.track.n_gates, args.laps)
+    if "physical" in summary:
+        import jax
+
+        with jax.transfer_guard("allow"):   # DreamerV3 disallows transfers process-wide
+            summary["physical"]["opening_half_width_m"] = float(np.asarray(env.cfg.track.inner)[0]) / 2
     text = report(track, summary, args.protocol)
     print(text)
 

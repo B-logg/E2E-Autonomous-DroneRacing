@@ -53,6 +53,8 @@ TRACKS = {
     # The paper's Figure 9, measured off the dimensioned panels on page 14 of
     # the PDF.  Nothing trains on it; it is the zero-shot layout test.
     "big": T.big_track,
+    # Our room, our gates (track.TEAM_TRACK).  Trained as `hw_team`.
+    "team": T.team_track,
 }
 
 # `hw_<track>`: the same layout on our drone and gate (skydreamer/hardware.py,
@@ -72,6 +74,7 @@ TRACK_T_G = {
     "inverted_loop": None,  # Table III default, 0.8 m
     "ladder_inverted_loop": 0.3,
     "big": 0.5,             # III-D uses t_g = 0.5 for the big track
+    "team": None,
 }
 TRACK_T_G.update({p + k: v if hw["t_g"] is None else hw["t_g"]
                   for p, hw in hardware.HW_STAGES.items() for k, v in list(TRACK_T_G.items())})
@@ -83,6 +86,7 @@ TRACK_W_MAX_DISTURBANCE = {
     "inverted_loop": 0.0,
     "ladder_inverted_loop": 0.0,
     "big": BIG_TRACK_W_MAX_DISTURBANCE,
+    "team": 0.0,
 }
 TRACK_W_MAX_DISTURBANCE.update(
     {p + k: v for p in hardware.HW_STAGES for k, v in list(TRACK_W_MAX_DISTURBANCE.items())})
@@ -133,7 +137,7 @@ class SkyDreamer:
         # Construction copies the track and the RNG seed to the device, both of
         # which the process-wide `jax_transfer_guard='disallow'` DreamerV3 sets
         # would otherwise reject.
-        hw, _ = hardware.split_task(self._task)
+        hw, base = hardware.split_task(self._task)
         # `NOMINAL` is process-global and read at trace time, so it is set (or
         # restored) before anything is jitted.  Restoring matters: a test process
         # that built an `hw_*` env must not leave the paper's env on our thrust.
@@ -141,10 +145,19 @@ class SkyDreamer:
         with ctx, jax.transfer_guard("allow"):
             track = TRACKS[self._task]()
             extra = {}
+            full = lambda v: jnp.full(track.outer.shape, v, track.outer.dtype)  # noqa: E731
             if hw:
-                track = track._replace(outer=jnp.full(track.outer.shape, hw["gate_outer"],
-                                                      track.outer.dtype))
                 extra = dict(cam_offset=hw["cam_offset"], d_g=hw["d_g"], fov=hw["fov"])
+                if "gate_inner" in hw:     # `hwg_`: our real gate on any layout, its own window
+                    track = track._replace(inner=full(hw["gate_inner"]), outer=full(hw["gate_outer"]))
+                elif base in hardware.OWN_GATE_D_G:
+                    extra["d_g"] = hardware.OWN_GATE_D_G[base]
+                else:                      # a paper layout: swap in our frame
+                    track = track._replace(outer=full(hw["gate_outer"]))
+            elif base in hardware.OWN_GATE_D_G:
+                extra["d_g"] = hardware.OWN_GATE_D_G[base]
+            if base in T.ROOMS:
+                extra["room"] = T.ROOMS[base]
             self._cfg = EnvConfig(
                 track=track,
                 max_steps=self._max_steps,

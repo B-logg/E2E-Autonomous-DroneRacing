@@ -55,6 +55,10 @@ TRAIN_FRACTION = 0.7
 # Evaluation flights in the paper run 2000 steps (~22 s).
 MAX_STEPS = 2000
 
+# How far inside the walls, ceiling and floor a start position is pulled
+# (`EnvConfig.room`): about one airframe plus a little.
+ROOM_MARGIN = 0.3
+
 # NOT FROM THE PAPER -- but the paper insists the two exist separately.  The
 # observation carries Omega-hat and omega-hat, "the body rates measured by the
 # IMU" and "the propeller angular velocities measured by the ESC", while the
@@ -112,6 +116,10 @@ class EnvConfig(NamedTuple):
     # image is always on the nominal ~104 degree square K; a narrower camera leaves
     # blank borders, applied here after augmentation.  None = fills K (the paper).
     fov: tuple[float, float] | None = None
+    # Walls and ceiling, (x_lo, x_hi, y_lo, y_hi, ceiling altitude) in NED metres;
+    # leaving them ends the episode like a crash.  Start positions are pulled in
+    # to ROOM_MARGIN inside.  None = open field (the paper).
+    room: tuple[float, float, float, float, float] | None = None
 
 
 class EnvState(NamedTuple):
@@ -150,7 +158,8 @@ class EnvState(NamedTuple):
     # loop reads it.  `done` is one bool, which is all the agent needs but
     # leaves "it crashed" unanswerable: flying into a gate, mushing into the
     # floor and tumbling out of control are different failures with different
-    # fixes.  0 = still flying, 1 = gate, 2 = ground, 3 = divergence.
+    # fixes.  0 = still flying, 1 = gate, 2 = ground, 3 = divergence,
+    # 4 = wall or ceiling (`EnvConfig.room`).
     term_cause: jax.Array
 
 
@@ -210,6 +219,13 @@ def reset(key: jax.Array, cfg: EnvConfig) -> tuple[EnvState, dict]:
     gate_yaw = cfg.track.yaw[start_gate]
     R_wg = trk.gate_rotation(gate_yaw).T  # gate -> world
     p_w = gate_pos + R_wg @ jnp.stack([x_g, y_g, z_g])
+    if cfg.room is not None:
+        # Table III starts 2-4 m before the gate, which in a small room can be
+        # through the wall; the floor bound keeps a low gate's start off the ground.
+        x_lo, x_hi, y_lo, y_hi, ceiling = cfg.room
+        m = ROOM_MARGIN
+        p_w = jnp.clip(p_w, jnp.array([x_lo + m, y_lo + m, -ceiling + m]),
+                       jnp.array([x_hi - m, y_hi - m, -m]))
     q = euler_to_quat(att[0], att[1], gate_yaw + att[2])
 
     s = State(
@@ -351,7 +367,9 @@ def observe(state: EnvState, cfg: EnvConfig) -> dict:
         # while it happens rather than only at the evaluation afterwards.
         "log/diverged": (state.term_cause == 3).astype(jnp.float32),
         "log/hit_gate": (state.term_cause == 1).astype(jnp.float32),
-        "log/hit_ground": (state.term_cause == 2).astype(jnp.float32),
+        # walls and ceiling count here too: a new log key would change the
+        # observation space the existing checkpoints were built with
+        "log/hit_ground": ((state.term_cause == 2) | (state.term_cause == 4)).astype(jnp.float32),
         "log/rate_l1": jnp.sum(jnp.abs(state.s.omega_b)).astype(jnp.float32),
         "log/speed": jnp.linalg.norm(state.s.v).astype(jnp.float32),
     }
@@ -421,11 +439,13 @@ def step(state: EnvState, action: jax.Array, cfg: EnvConfig):
     euler = quat_to_euler(s_next.q)
     hit_ground = trk.ground_collision(s_next.p, s_next.v, euler)
     blew_up = trk.diverged(s_next.omega_b, s_next.p, s_next.v)
-    terminal = hit_gate | hit_ground | blew_up
+    hit_wall = (trk.left_room(s_next.p, cfg.room) if cfg.room is not None
+                else jnp.array(False))
+    terminal = hit_gate | hit_ground | blew_up | hit_wall
     # Diagnostics only; checked in this order so a gate strike that also drives
     # the drone into the floor is reported as the gate strike that caused it.
     term_cause = jnp.where(
-        hit_gate, 1, jnp.where(hit_ground, 2, jnp.where(blew_up, 3, 0))
+        hit_gate, 1, jnp.where(hit_ground, 2, jnp.where(blew_up, 3, jnp.where(hit_wall, 4, 0)))
     ).astype(jnp.int32)
     reward = jnp.where(terminal, 0.0, reward)  # II-C: terminal reward is zero
 

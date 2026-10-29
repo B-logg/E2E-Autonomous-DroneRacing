@@ -37,6 +37,17 @@
 #       conditions on in stages (scripts/train.py, 9M steps).  <ckpt> is run 3's
 #       17M `ckpt` directory.  Fresh replay buffer, no demonstrations needed.
 #       Evaluate with ./run_test.sh as for --hw; ./run.sh --resume continues it.
+#   ./run.sh --finetune <ckpt> --team   ~37 h   run 7
+#       The same, from run 6's 9M `ckpt` onto our real track and gate
+#       (track.TEAM_TRACK): our gate on the old layout, then our layout, then the
+#       real window, then the phase-3 fine-tune (scripts/train.py, 10M steps).
+#       ./run_test.sh scores it on our track, 1 and 3 laps; ./run.sh --resume
+#       continues it.
+#
+#   Every training run also keeps a copy of its checkpoint every 1M steps in
+#   <run>/snapshots/step_<N>/ (SKYDREAMER_SNAPSHOT_EVERY; 0 turns it off), so any
+#   point of the run can still be scored afterwards:
+#       .venv/bin/python scripts/evaluate.py --logdir <run>/snapshots/step_<N> ...
 #   ./run.sh --setup-only ~10 min  install everything, train nothing
 #   ./run.sh --eval-only  ~10 min  re-evaluate the newest run (100 eps x 5 laps)
 #   ./run.sh --video      ~5 min   render the newest run flying (gif + figures)
@@ -73,6 +84,7 @@ PRESET="small"
 EXTRA=()
 WARM_CKPT=""
 FT_CKPT=""
+TEAM=0
 DEMOS="${SKYDREAMER_DEMOS:-}"
 DEMO_SCAN="${SKYDREAMER_DEMO_SCAN:-6000}"
 DEMO_KEEP="${SKYDREAMER_DEMO_KEEP:-800}"
@@ -91,6 +103,7 @@ for arg in "$@"; do
     --collect-demos) MODE="demos" ;;
     --warm-start) NEXT="ckpt" ;;
     --finetune)   NEXT="ft" ;;
+    --team)       TEAM=1 ;;
     --demos)      NEXT="demos" ;;
     --resume)     MODE="resume" ;;
     --setup-only) MODE="setup" ;;
@@ -109,11 +122,15 @@ done
 TRACK_ARGS=()
 if [ "${PRESET}" = "big" ]; then TRACK_ARGS=(--track big); fi
 
-# A fine-tuning run is a run on our hardware, under its own name.
+# A fine-tuning run is a run on our hardware, under its own name.  `--team`
+# picks run 7's schedule (our real track) instead of run 6's.
 FT=0
+FT_SCHED="hw"
 if [ -n "${FT_CKPT}" ]; then
   FT=1; HW=1; HW_TAG="-hwft"
+  if [ "${TEAM}" = "1" ]; then FT_SCHED="team"; HW_TAG="-team"; fi
 fi
+SNAP_EVERY="${SKYDREAMER_SNAPSHOT_EVERY:-1e6}"
 
 log() { printf '\n\033[1;36m==> %s\033[0m\n' "$*"; }
 # An aborted run leaves an empty logdir behind, and it sorts newest -- so pick
@@ -124,6 +141,9 @@ latest_run() {
   done
 }
 die() { printf '\n\033[1;31mERROR: %s\033[0m\n' "$*" >&2; exit 1; }
+if [ "${TEAM}" = "1" ] && [ "${FT}" = "0" ] && [ "${MODE}" != "resume" ]; then
+  die "--team is a fine-tuning schedule: ./run.sh --finetune <run 6 ckpt> --team"
+fi
 
 # --------------------------------------------------------------------------
 log "Environment"
@@ -488,7 +508,9 @@ if [ "${MODE}" = "resume" ]; then
   # whichever stage it was in, and the last stage's task is the same as --hw's.
   if [ -f "${RUN_DIR}/finetune" ]; then
     FT=1; HW=1; HW_TAG="-hwft"
-    echo "this is a fine-tuning run -- resuming its stages (from $(cat "${RUN_DIR}/finetune"))"
+    # Run 6 predates the schedule file, and its schedule is the default.
+    FT_SCHED="$(cat "${RUN_DIR}/finetune_schedule" 2>/dev/null || echo hw)"
+    echo "this is a fine-tuning run (${FT_SCHED}) -- resuming its stages (from $(cat "${RUN_DIR}/finetune"))"
   elif grep -q 'task: skydreamer_hw' "${RUN_DIR}/config.yaml" 2>/dev/null && [ "${HW}" = "0" ]; then
     HW=1; HW_TAG="-hw"
     echo "this run was trained on our drone and gate -- resuming with --hw"
@@ -502,7 +524,11 @@ else
   log "Training -> ${RUN_DIR}"
   if [ "${FT}" = "1" ]; then
     [ -z "${WARM_CKPT}" ] || die "--finetune loads the whole agent; drop --warm-start"
-    echo "Fine-tuning ${FT_CKPT} on our drone and gate, in stages (scripts/train.py)."
+    if [ "${FT_SCHED}" = "team" ]; then
+      echo "Fine-tuning ${FT_CKPT} onto our real track and gate, in stages (scripts/train.py)."
+    else
+      echo "Fine-tuning ${FT_CKPT} on our drone and gate, in stages (scripts/train.py)."
+    fi
   elif [ "${HW}" = "1" ]; then
     if [ -n "${WARM_CKPT}" ]; then
       echo "Our drone and gate: hw_* task (docs/hardware.md); world model from ${WARM_CKPT}."
@@ -567,12 +593,13 @@ if [ -n "${FT_CKPT}" ]; then
   FT_CKPT="$(cd "${FT_CKPT}" && pwd)"
   log "Fine-tuning the whole agent from ${FT_CKPT}"
   printf '%s\n' "${FT_CKPT}" > "${RUN_DIR}/finetune"
+  printf '%s\n' "${FT_SCHED}" > "${RUN_DIR}/finetune_schedule"
   EXTRA+=(--run.from_checkpoint "${FT_CKPT}")
 fi
 
 TRAIN_HW=()
 if [ "${FT}" = "1" ]; then
-  TRAIN_HW=(--finetune)
+  TRAIN_HW=(--finetune "${FT_SCHED}")
 elif [ "${HW}" = "1" ]; then
   TRAIN_HW=(--hw)
 fi
@@ -581,7 +608,15 @@ fi
 "${PY}" "${ROOT}/scripts/prune_replay.py" --logdir "${RUN_DIR}" \
     --keep-steps "${DISK_STEPS}" --interval 600 >> "${RUN_DIR}/prune.log" 2>&1 &
 PRUNER=$!
-trap 'kill ${PRUNER} 2>/dev/null || true' EXIT
+SNAPPER=""
+if [ "${SNAP_EVERY}" != "0" ]; then
+  # Copies files out of ckpt/ only; the trainer never waits on it.
+  "${PY}" "${ROOT}/scripts/milestone_snapshots.py" --logdir "${RUN_DIR}" \
+      --every "${SNAP_EVERY}" --interval "${SKYDREAMER_SNAPSHOT_INTERVAL:-300}" \
+      >> "${RUN_DIR}/snapshots.log" 2>&1 &
+  SNAPPER=$!
+fi
+trap 'kill ${PRUNER} ${SNAPPER} 2>/dev/null || true' EXIT
 
 "${PY}" "${ROOT}/scripts/train.py" \
     --logdir "${RUN_DIR}" --preset "${PRESET}" "${TRAIN_HW[@]+"${TRAIN_HW[@]}"}" \
@@ -591,6 +626,21 @@ trap 'kill ${PRUNER} 2>/dev/null || true' EXIT
     2>&1 | tee -a "${RUN_DIR}/train.log"
 
 log "Evaluating in simulation"
+if [ "${FT_SCHED}" = "team" ]; then
+  # Our real track: 4 gates a lap, so 5 laps is 20 crossings at a 0.6 m half-opening.
+  # Score the flights that matter first -- 1 lap and 3 -- against the real gate.
+  for L in 1 3; do
+    "${PY}" "${ROOT}/scripts/evaluate.py" --logdir "${RUN_DIR}" --episodes 200 --laps "${L}" \
+        --protocol physical --tag "_${L}lap" 2>&1 | tee -a "${RUN_DIR}/eval.log"
+  done
+  "${PY}" "${ROOT}/scripts/evaluate.py" --logdir "${RUN_DIR}" --episodes 100 --laps 3 \
+      --tag _3lap 2>&1 | tee -a "${RUN_DIR}/eval.log"
+  log "Done"
+  echo "  results   ${RUN_DIR}/evaluation_physical_1lap.txt  evaluation_physical_3lap.txt"
+  echo "  metrics   ${RUN_DIR}/metrics.jsonl"
+  echo "  weights   ${RUN_DIR}/ckpt    every 1M: ${RUN_DIR}/snapshots/"
+  exit 0
+fi
 "${PY}" "${ROOT}/scripts/evaluate.py" --logdir "${RUN_DIR}" --episodes 100 --laps 5 \
     2>&1 | tee -a "${RUN_DIR}/eval.log"
 if [ "${HW}" = "1" ]; then

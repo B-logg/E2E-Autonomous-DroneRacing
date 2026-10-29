@@ -959,12 +959,22 @@ def test_finetune_schedule_names_real_tasks():
     spec = importlib.util.spec_from_file_location("train_script", path)
     train = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(train)
-    steps = [s for s, _, _ in train.FINETUNE]
-    assert steps == sorted(steps) and len(set(steps)) == len(steps)
-    for _, stage, _ in train.FINETUNE:
-        assert f"{stage}_inverted_loop" in TRACKS
-    # It ends on the full profile, under the paper's phase-3 settings.
-    assert train.FINETUNE[-1][1] == "hw" and train.FINETUNE[-1][2] == train.PHASE_ARGS[3]
+    for name, sched in train.FINETUNE.items():
+        steps = [s for s, _, _ in sched]
+        assert steps == sorted(steps) and len(set(steps)) == len(steps), name
+        for _, task, _ in sched:
+            assert task in TRACKS, (name, task)
+        # Every stage before the last explores at the default entropy; the last is
+        # the paper's phase-3 fine-tune -- run 6's biggest gain came at that switch.
+        assert all(over == train.PHASE_ARGS[2] for _, _, over in sched[:-1]), name
+        assert sched[-1][2] == train.PHASE_ARGS[3], name
+    # run 6 is unchanged; run 7 ends on our track with the real window
+    assert [t for _, t, _ in train.FINETUNE["hw"]] == [
+        "hw1_inverted_loop", "hw2_inverted_loop", "hw3_inverted_loop",
+        "hw_inverted_loop", "hw_inverted_loop"]
+    assert train.FINETUNE["hw"][-1][0] == 9e6
+    assert [(s, t) for s, t, _ in train.FINETUNE["team"]] == [
+        (1.5e6, "hwg_inverted_loop"), (4e6, "hwg_team"), (7e6, "hw_team"), (10e6, "hw_team")]
 
 
 def test_forward_camera_moves_the_viewpoint():
@@ -999,3 +1009,132 @@ def test_hw_camera_field_of_view_blanks_the_rows_it_cannot_see():
     assert m[:, :].sum(0).min() == 52 and m[6:58].all() and not m[:6].any() and not m[58:].any()
     # a camera at least as wide as the nominal K in both directions loses nothing
     assert np.asarray(fov_valid(64, 64, (120.0, 110.0))).all()
+
+
+def test_team_track_is_the_plotted_room_not_its_mirror():
+    """gate_map.yaml is right-handed with Z up; the simulator is NED.  Swapping
+    x/y (not just flipping z) keeps the handedness, so the turns go the same way."""
+    tr = T.team_track()
+    pos, yaw = np.asarray(tr.pos), np.asarray(tr.yaw)
+    plot = np.stack([pos[:, 1], pos[:, 0], -pos[:, 2]], 1)          # back to map X, Y, Z
+    plot_yaw = (90.0 - np.degrees(yaw)) % 360.0
+    np.testing.assert_allclose(plot, [[-2, -1, .75], [0, 4, 2.25], [0, 4, .75], [2, -1, .75]], atol=1e-6)
+    np.testing.assert_allclose(plot_yaw, [90.0, 90.0, 270.0, 270.0], atol=1e-4)
+    assert abs(float(tr.inner[0]) - 1.2) < 1e-6 and abs(float(tr.outer[0]) - 1.5) < 1e-6
+    assert bool(np.asarray(tr.visible).all())
+    # G2 stands exactly on G3; G1, G3, G4 stand on the floor
+    assert abs(plot[1, 2] - plot[2, 2] - 1.5) < 1e-6 and np.allclose(plot[[0, 2, 3], 2], 0.75)
+    # G1 is flown toward G2 and G3 toward G4 (plan view), as the map's arrows are
+    for i in (0, 2):
+        d = pos[(i + 1) % 4, :2] - pos[i, :2]
+        assert d @ np.array([np.cos(yaw[i]), np.sin(yaw[i])]) > 0, i
+    # and the whole track is inside the room
+    x_lo, x_hi, y_lo, y_hi, ceiling = T.ROOMS["team"]
+    assert (pos[:, 0] > x_lo).all() and (pos[:, 0] < x_hi).all()
+    assert (pos[:, 1] > y_lo).all() and (pos[:, 1] < y_hi).all() and (-pos[:, 2] < ceiling).all()
+
+
+def test_hw_team_keeps_our_gate_and_window_and_the_room_walls():
+    from skydreamer import hardware
+    from skydreamer.embodied_env import SkyDreamer
+
+    try:
+        for task in ("hw1_team", "hw_team"):
+            env = SkyDreamer(task, max_steps=50, seed=1)
+            cfg = env.cfg
+            # not swapped for gate_outer (2.4 / 2.1): this track is laid out with our gate
+            assert abs(float(cfg.track.outer[0]) - 1.5) < 1e-6, task
+            assert cfg.d_g == hardware.OWN_GATE_D_G["team"] and cfg.room == T.ROOMS["team"], task
+            x_lo, x_hi, y_lo, y_hi, ceiling = cfg.room
+            reset_b, _ = batched(cfg._replace(train_fraction=0.7))
+            with jax.transfer_guard("allow"):
+                st, _ = reset_b(jax.random.split(jax.random.key(0), 256))
+                p = np.asarray(st.s.p)
+            m = 0.3 - 1e-5
+            assert (p[:, 0] >= x_lo + m).all() and (p[:, 0] <= x_hi - m).all(), task
+            assert (p[:, 1] >= y_lo + m).all() and (p[:, 1] <= y_hi - m).all(), task
+            assert (-p[:, 2] >= m).all() and (-p[:, 2] <= ceiling - m).all(), task
+    finally:
+        hardware.apply_dynamics(None)
+    # the paper's tracks have no room
+    assert SkyDreamer("inverted_loop", max_steps=50, seed=1).cfg.room is None
+
+
+def test_leaving_the_room_ends_the_episode():
+    cfg = EnvConfig(track=T.team_track(), room=T.ROOMS["team"], train_fraction=0.0)
+    with jax.transfer_guard("allow"):
+        state, _ = reset(jax.random.key(0), cfg)
+        ceiling = T.ROOMS["team"][4]
+        up = state._replace(s=state.s._replace(p=state.s.p.at[2].set(-(ceiling + 0.2)),
+                                               v=jnp.zeros(3)))
+        _, _, _, terminal, _ = env_step(up, jnp.full(4, 0.5), cfg)
+        s2, *_ = env_step(up, jnp.full(4, 0.5), cfg)
+        assert bool(terminal) and int(s2.term_cause) == 4
+        # the same state without a room keeps flying
+        _, _, _, terminal, _ = env_step(up, jnp.full(4, 0.5), cfg._replace(room=None))
+        assert not bool(terminal)
+
+
+def test_team_finetune_stages_bring_our_gate_then_our_track():
+    from skydreamer import hardware
+    from skydreamer.embodied_env import SkyDreamer
+
+    try:
+        # task: (inner, outer, d_g, has room)
+        want = {"hwg_inverted_loop": (1.2, 1.5, (0.60, 0.45), False),
+                "hwg_team": (1.2, 1.5, (0.60, 0.45), True),
+                "hw_team": (1.2, 1.5, (0.50, 0.45), True)}
+        for task, (inner, outer, d_g, room) in want.items():
+            cfg = SkyDreamer(task, max_steps=50, seed=1).cfg
+            assert abs(float(cfg.track.inner[0]) - inner) < 1e-6, task
+            assert abs(float(cfg.track.outer[0]) - outer) < 1e-6, task
+            assert cfg.d_g == d_g and cfg.t_g == 0.40, task
+            assert (cfg.room is not None) == room, task
+            assert cfg.cam_offset == hardware.CAM_FORWARD and cfg.fov == hardware.CAM_FOV, task
+        # the run 6 profile still has its 2.1 m gate
+        cfg = SkyDreamer("hw_inverted_loop", max_steps=50, seed=1).cfg
+        assert abs(float(cfg.track.outer[0]) - 2.1) < 1e-5 and cfg.d_g == (0.65, 0.60)
+    finally:
+        hardware.apply_dynamics(None)
+    # `hwg_` already has the real gate and the real eval window, so it is scored as is
+    assert hardware.full_hw("hwg_inverted_loop") == "hwg_inverted_loop"
+    assert hardware.full_hw("hwg_team") == "hwg_team"
+    assert hardware.full_hw("hw3_inverted_loop") == "hw_inverted_loop"
+
+
+def test_milestone_snapshots_copy_each_million_once(tmp_path):
+    import importlib.util
+    import pickle
+
+    path = pathlib.Path(__file__).resolve().parents[1] / "scripts" / "milestone_snapshots.py"
+    spec = importlib.util.spec_from_file_location("milestone_snapshots", path)
+    ms = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(ms)
+
+    run = tmp_path / "run"
+    (run / "ckpt").mkdir(parents=True)
+    (run / "config.yaml").write_text("jax:\n  prealloc: true\n")
+    out = run / "snapshots"
+
+    def save(step, name):
+        d = run / "ckpt" / name
+        d.mkdir()
+        (d / "step.pkl").write_bytes(pickle.dumps(step))
+        (d / "agent.pkl").write_bytes(b"x")
+        (d / "done").write_text("")
+        (run / "ckpt" / "latest").write_text(name)
+
+    assert ms.poll(run, out, 1_000_000, 0) == 0          # no checkpoint yet
+    save(900_000, "a")
+    assert ms.poll(run, out, 1_000_000, 0) == 0 and not out.exists()
+    save(1_050_000, "b")
+    assert ms.poll(run, out, 1_000_000, 0) == 1
+    snap = out / "step_000001050000"
+    assert (snap / "ckpt" / "latest").read_text() == "b"
+    assert "prealloc: false" in (snap / "config.yaml").read_text()
+    save(1_400_000, "c")                                  # same milestone: no copy
+    assert ms.poll(run, out, 1_000_000, 1) == 1 and len(list(out.glob("step_*"))) == 1
+    save(2_100_000, "d")
+    assert ms.poll(run, out, 1_000_000, 1) == 2 and len(list(out.glob("step_*"))) == 2
+    # a resumed run picks up where the copies are
+    assert ms.done_milestones(out, 1_000_000) == 2
