@@ -158,6 +158,8 @@ class SkyDreamer:
                 extra["d_g"] = hardware.OWN_GATE_D_G[base]
             if base in T.ROOMS:
                 extra["room"] = T.ROOMS[base]
+            if base in T.V_CAP:
+                extra["v_cap"] = T.V_CAP[base]
             self._cfg = EnvConfig(
                 track=track,
                 max_steps=self._max_steps,

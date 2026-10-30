@@ -975,6 +975,9 @@ def test_finetune_schedule_names_real_tasks():
     assert train.FINETUNE["hw"][-1][0] == 9e6
     assert [(s, t) for s, t, _ in train.FINETUNE["team"]] == [
         (1.5e6, "hwg_inverted_loop"), (4e6, "hwg_team"), (7e6, "hw_team"), (10e6, "hw_team")]
+    # run 7b restarts run 7's 4M agent at the wider window, then run 7's last stages
+    assert [(s, t) for s, t, _ in train.FINETUNE["team2"]] == [
+        (3e6, "hwg_team"), (6e6, "hw_team"), (8e6, "hw_team")]
 
 
 def test_forward_camera_moves_the_viewpoint():
@@ -1073,6 +1076,42 @@ def test_leaving_the_room_ends_the_episode():
         # the same state without a room keeps flying
         _, _, _, terminal, _ = env_step(up, jnp.full(4, 0.5), cfg._replace(room=None))
         assert not bool(terminal)
+
+
+def test_speed_over_the_cap_costs_more_than_the_progress_it_buys():
+    cap = T.V_CAP["team"]
+    v = lambda speed: jnp.array([speed, 0.0, 0.0])  # noqa: E731
+    assert float(T.speed_penalty(v(cap), cap)) == 0.0
+    assert float(T.speed_penalty(v(cap - 1.0), cap)) == 0.0
+    # straight at the target, each m/s over the cap is a net loss
+    over = 3.0
+    gain = T.W_PROG * over / T.CONTROL_FREQ
+    assert float(T.speed_penalty(v(cap + over), cap)) > gain
+
+    cfg = EnvConfig(track=T.team_track(), room=T.ROOMS["team"], train_fraction=0.0)
+    with jax.transfer_guard("allow"):
+        state, _ = reset(jax.random.key(0), cfg)
+        fast = state._replace(s=state.s._replace(v=jnp.array([0.0, 0.0, -9.0])))
+        u = jnp.full(4, 0.5)
+        _, _, r_free, *_ = env_step(fast, u, cfg)
+        _, _, r_cap, *_ = env_step(fast, u, cfg._replace(v_cap=cap))
+        _, _, r_slow_free, *_ = env_step(state, u, cfg)
+        _, _, r_slow_cap, *_ = env_step(state, u, cfg._replace(v_cap=cap))
+    assert float(r_cap) < float(r_free) - 0.1
+    assert abs(float(r_slow_cap) - float(r_slow_free)) < 1e-6   # starts at rest: no cost
+
+
+def test_only_our_room_track_has_a_speed_cap():
+    from skydreamer import hardware
+    from skydreamer.embodied_env import SkyDreamer
+
+    try:
+        for task in ("hwg_team", "hw_team"):
+            assert SkyDreamer(task, max_steps=50, seed=1).cfg.v_cap == T.V_CAP["team"], task
+        for task in ("inverted_loop", "hw_inverted_loop", "hwg_inverted_loop"):
+            assert SkyDreamer(task, max_steps=50, seed=1).cfg.v_cap is None, task
+    finally:
+        hardware.apply_dynamics(None)
 
 
 def test_team_finetune_stages_bring_our_gate_then_our_track():

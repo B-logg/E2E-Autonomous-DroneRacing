@@ -116,6 +116,16 @@ def rate_penalty(omega_b: jax.Array, f_c: float = CONTROL_FREQ) -> jax.Array:
     return (jnp.exp(jnp.minimum(l1, RATE_CLIP)) - 1.0) / (2.0 * f_c * 1e5)
 
 
+# Speed above the cap costs twice the progress it can buy (progress pays W_PROG
+# per metre, i.e. W_PROG / f_c per m/s per step), so the reward peaks at the cap.
+W_SPEED = 2.0 * W_PROG / CONTROL_FREQ
+
+
+def speed_penalty(v: jax.Array, v_cap: float) -> jax.Array:
+    """W_SPEED per m/s over `v_cap`, per step; 0 at or below it."""
+    return W_SPEED * jnp.maximum(jnp.linalg.norm(v, axis=-1) - v_cap, 0.0)
+
+
 def gate_reward(p_g: jax.Array, d_g: float) -> jax.Array:
     """1 at the plane centre, falling linearly to 0 at the effective edge."""
     off = jnp.maximum(jnp.abs(p_g[..., 1]), jnp.abs(p_g[..., 2]))
@@ -376,6 +386,11 @@ TEAM_TRACK = [
 # Walls and ceiling, NED: (x_lo, x_hi, y_lo, y_hi, ceiling altitude).  Map X -4..4,
 # Y -4..7, Z 0..3.5.  The paper's tracks have no room, hence a separate table.
 ROOMS = {"team": (-4.0, 7.0, -4.0, 4.0, 3.5)}
+# Speed limit, m/s, on tracks that need one (not in the paper).  Run 7 learned to
+# reach G2 at ~14 m/s and then hit the ceiling or the far wall: the split-S down
+# to G3, 1.5 m below, has a ~0.75 m radius, which TWR ~4 can turn at ~4.8 m/s at
+# most, and the room leaves 3 m past G2.  4.0 keeps a margin under that.
+V_CAP = {"team": 4.0}
 
 
 def team_track() -> Track:

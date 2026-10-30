@@ -96,6 +96,9 @@
 학습 중 1M마다 체크포인트가 `<run>/snapshots/`에 따로 남습니다.
 4M 점검(우리 트랙 1랩 시뮬레이션 완주 30%)에 미달하면 우리 트랙 데모를 학습 중인 run에 넣습니다:
 `./run.sh --collect-demos --team` 후 `./run.sh --resume --demos demos_team`.
+7차는 4M 점검에서 0%였습니다(G2까지 ~14 m/s로 돌진해 천장·벽 충돌). 그래서 7b차는 7차 4M 스냅샷에서
+우리 트랙 속도 제한(4 m/s 초과분에 보상 감점, `track.V_CAP`)과 데모를 함께 넣어 다시 시작합니다(8M 스텝):
+`./run.sh --collect-demos --team` 후 `./run.sh --finetune <7차 4M 스냅샷>/ckpt --team2 --demos demos_team`.
 
 ### 참고
 - SkyDreamer (https://arxiv.org/abs/2510.14783)

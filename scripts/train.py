@@ -88,6 +88,15 @@ FINETUNE = {
         (7.0e6, "hw_team", PHASE_ARGS[2]),
         (10.0e6, "hw_team", PHASE_ARGS[3]),
     ],
+    # run 7b: run 7's 4M agent (0% on our track: it reached G2 at ~14 m/s and hit
+    # the ceiling or the far wall), now under the room's speed limit
+    # (track.V_CAP) and with demonstrations in the buffer.  It restarts at the
+    # wider window, then follows run 7's last two stages.
+    "team2": [
+        (3.0e6, "hwg_team", PHASE_ARGS[2]),
+        (6.0e6, "hw_team", PHASE_ARGS[2]),
+        (8.0e6, "hw_team", PHASE_ARGS[3]),
+    ],
 }
 
 
@@ -101,8 +110,9 @@ def main() -> int:
     ap.add_argument("--hw", action="store_true",
                     help="train on our drone and gate (docs/hardware.md): the hw_* task")
     ap.add_argument("--finetune", nargs="?", const="hw", default=None, choices=sorted(FINETUNE),
-                    help="fine-tune a finished agent in stages: hw (run 6, our drone) "
-                         "or team (run 7, our real track)")
+                    help="fine-tune a finished agent in stages: hw (run 6, our drone), "
+                         "team (run 7, our real track) or team2 (run 7b, from run 7's 4M "
+                         "under the speed limit)")
     ap.add_argument("--steps-scale", type=float, default=1.0,
                     help="multiply every phase boundary (testing the phase chain end to end)")
     ap.add_argument("--dry-run", action="store_true")

@@ -433,3 +433,30 @@ radius is 0.75 m against the old 1.35 m: at the bottom of the loop, (TWR - 1) g 
 allows ~4.8 m/s at TWR 4.1, where run 6 flies 10-14 m/s. Below TWR 3.5 run 6 already
 succeeded only 51% of the time.
 
+### Run 7's 4M check, and run 7b: a speed limit for the room
+
+Run 7 failed its 4M check, on exactly the risk above. `physical` on `team`, 100 episodes:
+0% at 1 and 3 laps, also 0% in the sim; 82 flights passed G1 and G2, then 75 ended on
+a wall or the ceiling and 25 on the floor. Mean peak speed 15.5 m/s (max 25), mean
+flight 1.8 s. 3.4M was the same (0%, 1.93 gates). The stages chained correctly (each
+loaded the previous stage's checkpoint); the policy learned to charge G2 at ~14 m/s,
+which no split-S to G3 1.5 m below can follow in a room with 3 m past G2. Training
+episodes almost all ended in a crash, and the training score had flattened (52, 55, 58,
+57 from 3.25M to 4M). Stage 3 only narrows the window, so run 7 was stopped at ~4.3M.
+
+Run 7b (`./run.sh --finetune <run 7 4M snapshot>/ckpt --team2 --demos demos_team`, 8M):
+
+- **Speed limit.** Not in the paper. On tracks in `track.V_CAP` (`team`: 4.0 m/s, under
+  the ~4.8 m/s the split-S allows) each step pays `W_SPEED * (|v| - v_cap)` above the cap,
+  `W_SPEED = 2 W_PROG / f_c`: twice the progress the extra speed can buy, so the reward
+  peaks at the cap. It is in the reward, not the dynamics: the policy may still exceed it.
+  It applies to every task on `team`, so evaluation is unaffected (reward is not scored).
+- **Demonstrations from the start**, the planned fallback (`--collect-demos --team`,
+  2.0 m/s, under the cap): the first successful split-S flights the buffer sees.
+- **Schedule** `team2`: `hwg_team` (window 0.60) to 3M, `hw_team` (0.50) to 6M, phase 3 to
+  8M. From run 7's 4M agent rather than run 6's: it already knows our gate and the first
+  two gates of our layout.
+
+Checks, as run 7's: at 3M our track should finish one lap in the sim ≥30% of the time,
+and mean peak speed should be near the cap rather than run 7's 15 m/s; at 6M, ≥60%.
+

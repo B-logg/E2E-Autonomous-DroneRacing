@@ -15,7 +15,7 @@
 #   ./run_test.sh --episodes 50    fewer episodes (default 100, as Table IV)
 #   ./run_test.sh --laps 3         laps per episode (default 5; repeatable)
 #
-# A run 7 run (`./run.sh --finetune <ckpt> --team`) is scored on our real track only
+# A run 7 or 7b run (`./run.sh --finetune <ckpt> --team` / `--team2`) is scored on our real track only
 # (`team`), 1 and 3 laps -- no big track, no old layout.
 #   ./run_test.sh --watch 3600     repeat every hour, building a history
 #   ./run_test.sh --history        print the history so far and exit
@@ -99,11 +99,12 @@ if grep -q 'task: skydreamer_hw' "${RUN_DIR}/config.yaml"; then
   echo "run trained on our drone and gate -> protocol: ${PROTOCOLS[*]}"
 fi
 [ ${#PROTOCOLS[@]} -gt 0 ] || PROTOCOLS=(paper)
-if [ "$(cat "${RUN_DIR}/finetune_schedule" 2>/dev/null)" = "team" ]; then
-  # Run 7 is trained and judged on our track alone.
+case "$(cat "${RUN_DIR}/finetune_schedule" 2>/dev/null)" in team|team2) TEAM_RUN=1 ;; *) TEAM_RUN=0 ;; esac
+if [ "${TEAM_RUN}" = "1" ]; then
+  # Runs 7 and 7b are trained and judged on our track alone.
   [ ${#TRACKS[@]} -gt 0 ] || TRACKS=(team)
   [ ${#LAPS[@]} -gt 0 ] || LAPS=(1 3)
-  echo "run 7 (our real track) -> tracks: ${TRACKS[*]}, laps: ${LAPS[*]}"
+  echo "run 7/7b (our real track) -> tracks: ${TRACKS[*]}, laps: ${LAPS[*]}"
 fi
 [ ${#TRACKS[@]} -gt 0 ] || TRACKS=(inverted_loop big)
 [ ${#LAPS[@]} -gt 0 ] || LAPS=(5)

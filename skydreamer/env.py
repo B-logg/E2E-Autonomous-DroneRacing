@@ -120,6 +120,9 @@ class EnvConfig(NamedTuple):
     # leaving them ends the episode like a crash.  Start positions are pulled in
     # to ROOM_MARGIN inside.  None = open field (the paper).
     room: tuple[float, float, float, float, float] | None = None
+    # Speed limit in m/s, enforced by a reward penalty (track.speed_penalty).
+    # None = none (the paper).
+    v_cap: float | None = None
 
 
 class EnvState(NamedTuple):
@@ -434,6 +437,8 @@ def step(state: EnvState, action: jax.Array, cfg: EnvConfig):
     r_prog = jnp.where(active, state.prev_dist - dist_now, 0.0)
 
     r_rate = trk.rate_penalty(s_next.omega_b)
+    if cfg.v_cap is not None:
+        r_rate = r_rate + trk.speed_penalty(s_next.v, cfg.v_cap)
     reward = trk.W_PROG * r_prog - r_rate + trk.W_GATE * r_gate
 
     euler = quat_to_euler(s_next.q)
