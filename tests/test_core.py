@@ -978,6 +978,9 @@ def test_finetune_schedule_names_real_tasks():
     # run 7b restarts run 7's 4M agent at the wider window, then run 7's last stages
     assert [(s, t) for s, t, _ in train.FINETUNE["team2"]] == [
         (3e6, "hwg_team"), (6e6, "hw_team"), (8e6, "hw_team")]
+    # run 7c sharpens run 7b's 8M agent: one stage, phase 3 from the start
+    assert [(s, t) for s, t, _ in train.FINETUNE["team3"]] == [(3e6, "hwp_team")]
+    assert train.FINETUNE["team3"][0][2] == train.PHASE_ARGS[3]
 
 
 def test_forward_camera_moves_the_viewpoint():
@@ -1112,6 +1115,37 @@ def test_only_our_room_track_has_a_speed_cap():
             assert SkyDreamer(task, max_steps=50, seed=1).cfg.v_cap is None, task
     finally:
         hardware.apply_dynamics(None)
+
+
+def test_run_7c_trains_at_the_real_window_under_a_steeper_speed_penalty():
+    from skydreamer import hardware
+    from skydreamer.embodied_env import SkyDreamer
+
+    try:
+        cfg = SkyDreamer("hwp_team", max_steps=50, seed=1).cfg
+        ref = SkyDreamer("hw_team", max_steps=50, seed=1).cfg
+    finally:
+        hardware.apply_dynamics(None)
+    # train window = eval window = the real 0.45; everything else is hw_team's
+    assert cfg.d_g == (0.45, 0.45) and ref.d_g == (0.50, 0.45)
+    assert cfg.w_speed == T.W_SPEED_STRICT and ref.w_speed == T.W_SPEED
+    assert T.W_SPEED_STRICT > T.W_SPEED
+    for f in ("v_cap", "room", "t_g", "cam_offset", "fov"):
+        assert getattr(cfg, f) == getattr(ref, f), f
+    assert np.allclose(np.asarray(cfg.track.inner), np.asarray(ref.track.inner))
+    assert np.allclose(np.asarray(cfg.track.outer), np.asarray(ref.track.outer))
+    # scored as hw_team, so its numbers line up with run 7b's
+    assert hardware.full_hw("hwp_team") == "hw_team"
+    # the steeper weight reaches the reward
+    with jax.transfer_guard("allow"):
+        state, _ = reset(jax.random.key(0), ref)
+        fast = state._replace(s=state.s._replace(v=jnp.array([0.0, 0.0, -8.0])))   # climbing
+        u = jnp.full(4, 0.5)
+        _, _, r_old, *_ = env_step(fast, u, ref)
+        _, _, r_new, *_ = env_step(fast, u, ref._replace(w_speed=T.W_SPEED_STRICT))
+    # charged on the next state's speed, which gravity has just slowed a little
+    over = (float(r_old) - float(r_new)) / (T.W_SPEED_STRICT - T.W_SPEED)
+    assert 0.95 * (8.0 - T.V_CAP["team"]) < over <= 8.0 - T.V_CAP["team"]
 
 
 def test_team_finetune_stages_bring_our_gate_then_our_track():

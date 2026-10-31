@@ -460,3 +460,38 @@ Run 7b (`./run.sh --finetune <run 7 4M snapshot>/ckpt --team2 --demos demos_team
 Checks, as run 7's: at 3M our track should finish one lap in the sim ≥30% of the time,
 and mean peak speed should be near the cap rather than run 7's 15 m/s; at 6M, ≥60%.
 
+
+### Run 7b's result, and run 7c: the real window and a steeper speed penalty
+
+Run 7b, `physical` on `team`, 1 lap (8M: 200 episodes, the others 100):
+
+| step | physical | sim only | ended on the ground | sim-clean, real gate fails |
+|---|---|---|---|---|
+| 4.6M | 10% | 33% | 47% | 23% |
+| 6.05M | 24% | 55% | 44% | 31% |
+| 7.34M | 41% | 65% | 33% | 24% |
+| 7.58M | 38% | 59% | 37% | 21% |
+| 8.0M | 39.5% | 66.5% | 30.5% | 27% |
+
+Phase 3 (from 6M) took it from 10% to ~40%, flat since 7.3M. 3 laps: 6.0% physical,
+which is 0.395^3 -- each lap fails independently, nothing particular to lap 2. Its two
+failures, about equal: (1) the split-S exit, 61 of 200 on the ground, 18 before G3 and
+42 just after it; the renders show the descent never arrested, at up to 8.5 m/s against
+the 4 m/s cap. (2) sim-clean flights the real gate rejects, 54 of 200, at G4 (37) and
+G3 (20), both 0.75 m up, right after the split-S.
+
+Run 7c (`./run.sh --finetune <run 7b>/ckpt --team3`, 3M):
+
+- **Train window = eval window, 0.45 m** (hardware `hwp_`), against (2). Run 7b trained
+  at 0.50 against the real 0.45.
+- **Speed penalty `W_SPEED_STRICT = 5 W_PROG / f_c`**, from 2, against (1): gravity's
+  speed in the descent was worth taking at twice the progress.
+- **Phase 3 throughout**, not phase 2 then 3: the agent flies the track already, and
+  phase 2's entropy would spend the precision phase 3 bought.
+- **No demonstrations.** The agent does not need them, and run 7b, which carried 1.5M
+  demonstration steps in its buffer, ran out of RAM at 7.62M (with an evaluation running
+  alongside).
+
+`hwp_team` is scored as `hw_team`, so the numbers line up with the table above. Checks:
+at +1M, sim-only ≥55% (else the penalty was too steep: restart at 3x); at +2M, ground
+<20% and physical ≥50%; the aim at 3M is physical ≥60%.

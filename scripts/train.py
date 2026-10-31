@@ -31,6 +31,11 @@ invocation resuming from the previous phase's checkpoint in the same logdir.
     stage 4   7   -> 10M   hw_team, the paper's phase-3 fine-tune settings
     (./run.sh --finetune <ckpt> --team)
 
+  --finetune team3 (run 7c, 3M steps; docs/deviations.md)
+    run 7b's 8M agent, phase-3 settings throughout:
+    stage 1   0   -> 3M    hwp_team: train window 0.45 (= eval), speed penalty 5x progress (was 2x)
+    (./run.sh --finetune <run 7b ckpt> --team3)
+
 Usage:
   python scripts/train.py --logdir ~/logdir/sd/run1
   python scripts/train.py --logdir ~/logdir/sd/big1 --preset big
@@ -97,6 +102,13 @@ FINETUNE = {
         (6.0e6, "hw_team", PHASE_ARGS[2]),
         (8.0e6, "hw_team", PHASE_ARGS[3]),
     ],
+    # run 7c: run 7b's 8M agent, at the real window and a steeper speed penalty
+    # (hardware `hwp_`).  Phase 3 throughout: the agent already flies the track,
+    # and run 7b's precision came with phase 3 (10% -> 40% physical), which phase
+    # 2's exploration entropy would spend again.  No demonstrations.
+    "team3": [
+        (3.0e6, "hwp_team", PHASE_ARGS[3]),
+    ],
 }
 
 
@@ -111,8 +123,9 @@ def main() -> int:
                     help="train on our drone and gate (docs/hardware.md): the hw_* task")
     ap.add_argument("--finetune", nargs="?", const="hw", default=None, choices=sorted(FINETUNE),
                     help="fine-tune a finished agent in stages: hw (run 6, our drone), "
-                         "team (run 7, our real track) or team2 (run 7b, from run 7's 4M "
-                         "under the speed limit)")
+                         "team (run 7, our real track), team2 (run 7b, from run 7's 4M "
+                         "under the speed limit) or team3 (run 7c, from run 7b's 8M "
+                         "at the real window)")
     ap.add_argument("--steps-scale", type=float, default=1.0,
                     help="multiply every phase boundary (testing the phase chain end to end)")
     ap.add_argument("--dry-run", action="store_true")

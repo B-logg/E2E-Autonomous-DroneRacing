@@ -52,6 +52,11 @@
 #       ceiling).  A new run from run 7's 4M snapshot, under our track's speed
 #       limit (track.V_CAP, 4 m/s) with demonstrations in the buffer from the
 #       start (scripts/train.py, 8M steps).  Scored and resumed as run 7.
+#   ./run.sh --finetune <ckpt> --team3   ~11 h   run 7c
+#       Run 7b's 8M `ckpt` (39.5% physical, 1 lap), sharpened: the train window
+#       at the real 0.45 m and a steeper speed penalty (hardware `hwp_`), phase-3
+#       settings throughout, no demonstrations (scripts/train.py, 3M steps).
+#       Scored and resumed as run 7.
 #
 #   Every training run also keeps a copy of its checkpoint every 1M steps in
 #   <run>/snapshots/step_<N>/ (SKYDREAMER_SNAPSHOT_EVERY; 0 turns it off), so any
@@ -114,6 +119,7 @@ for arg in "$@"; do
     --finetune)   NEXT="ft" ;;
     --team)       TEAM=1 ;;
     --team2)      TEAM=2 ;;
+    --team3)      TEAM=3 ;;
     --demos)      NEXT="demos" ;;
     --resume)     MODE="resume" ;;
     --setup-only) MODE="setup" ;;
@@ -140,6 +146,7 @@ if [ -n "${FT_CKPT}" ]; then
   FT=1; HW=1; HW_TAG="-hwft"
   if [ "${TEAM}" = "1" ]; then FT_SCHED="team"; HW_TAG="-team"; fi
   if [ "${TEAM}" = "2" ]; then FT_SCHED="team2"; HW_TAG="-team2"; fi
+  if [ "${TEAM}" = "3" ]; then FT_SCHED="team3"; HW_TAG="-team3"; fi
 fi
 SNAP_EVERY="${SKYDREAMER_SNAPSHOT_EVERY:-1e6}"
 
@@ -155,6 +162,13 @@ die() { printf '\n\033[1;31mERROR: %s\033[0m\n' "$*" >&2; exit 1; }
 if [ "${TEAM}" = "2" ] && [ "${FT}" = "0" ]; then
   die "--team2 is a fine-tuning schedule: ./run.sh --finetune <run 7 4M snapshot> --team2 --demos demos_team
      (demonstrations: ./run.sh --collect-demos --team)"
+fi
+if [ "${TEAM}" = "3" ] && [ "${FT}" = "0" ]; then
+  die "--team3 is a fine-tuning schedule: ./run.sh --finetune <run 7b ckpt> --team3"
+fi
+if [ "${TEAM}" = "3" ] && [ -n "${DEMOS}" ]; then
+  die "--team3 trains without demonstrations (run 7b's agent flies the track itself,
+     and run 7b, which held them in its buffer, ran out of RAM); drop --demos"
 fi
 if [ "${TEAM}" = "1" ] && [ "${FT}" = "0" ] && [ "${MODE}" != "resume" ] && [ "${MODE}" != "demos" ]; then
   die "--team is a fine-tuning schedule: ./run.sh --finetune <run 6 ckpt> --team
@@ -548,7 +562,9 @@ else
   log "Training -> ${RUN_DIR}"
   if [ "${FT}" = "1" ]; then
     [ -z "${WARM_CKPT}" ] || die "--finetune loads the whole agent; drop --warm-start"
-    if [ "${FT_SCHED}" = "team2" ]; then
+    if [ "${FT_SCHED}" = "team3" ]; then
+      echo "Fine-tuning ${FT_CKPT} on our real track at the real gate window (scripts/train.py)."
+    elif [ "${FT_SCHED}" = "team2" ]; then
       echo "Fine-tuning ${FT_CKPT} on our real track under its speed limit, in stages (scripts/train.py)."
     elif [ "${FT_SCHED}" = "team" ]; then
       echo "Fine-tuning ${FT_CKPT} onto our real track and gate, in stages (scripts/train.py)."
@@ -657,7 +673,7 @@ trap 'kill ${PRUNER} ${SNAPPER} 2>/dev/null || true' EXIT
     2>&1 | tee -a "${RUN_DIR}/train.log"
 
 log "Evaluating in simulation"
-if [ "${FT_SCHED}" = "team" ] || [ "${FT_SCHED}" = "team2" ]; then
+if [ "${FT_SCHED}" = "team" ] || [ "${FT_SCHED}" = "team2" ] || [ "${FT_SCHED}" = "team3" ]; then
   # Our real track: 4 gates a lap, so 5 laps is 20 crossings at a 0.6 m half-opening.
   # Score the flights that matter first -- 1 lap and 3 -- against the real gate.
   for L in 1 3; do

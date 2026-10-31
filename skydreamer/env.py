@@ -123,6 +123,8 @@ class EnvConfig(NamedTuple):
     # Speed limit in m/s, enforced by a reward penalty (track.speed_penalty).
     # None = none (the paper).
     v_cap: float | None = None
+    # Its penalty per m/s over, per step.
+    w_speed: float = trk.W_SPEED
 
 
 class EnvState(NamedTuple):
@@ -438,7 +440,7 @@ def step(state: EnvState, action: jax.Array, cfg: EnvConfig):
 
     r_rate = trk.rate_penalty(s_next.omega_b)
     if cfg.v_cap is not None:
-        r_rate = r_rate + trk.speed_penalty(s_next.v, cfg.v_cap)
+        r_rate = r_rate + trk.speed_penalty(s_next.v, cfg.v_cap, cfg.w_speed)
     reward = trk.W_PROG * r_prog - r_rate + trk.W_GATE * r_gate
 
     euler = quat_to_euler(s_next.q)

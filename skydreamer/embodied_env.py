@@ -151,7 +151,7 @@ class SkyDreamer:
                 if "gate_inner" in hw:     # `hwg_`: our real gate on any layout, its own window
                     track = track._replace(inner=full(hw["gate_inner"]), outer=full(hw["gate_outer"]))
                 elif base in hardware.OWN_GATE_D_G:
-                    extra["d_g"] = hardware.OWN_GATE_D_G[base]
+                    extra["d_g"] = hw.get("own_gate_d_g", hardware.OWN_GATE_D_G[base])
                 else:                      # a paper layout: swap in our frame
                     track = track._replace(outer=full(hw["gate_outer"]))
             elif base in hardware.OWN_GATE_D_G:
@@ -160,6 +160,8 @@ class SkyDreamer:
                 extra["room"] = T.ROOMS[base]
             if base in T.V_CAP:
                 extra["v_cap"] = T.V_CAP[base]
+                if hw and "w_speed" in hw:
+                    extra["w_speed"] = hw["w_speed"]
             self._cfg = EnvConfig(
                 track=track,
                 max_steps=self._max_steps,

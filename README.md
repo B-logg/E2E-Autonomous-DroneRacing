@@ -99,6 +99,9 @@
 7차는 4M 점검에서 0%였습니다(G2까지 ~14 m/s로 돌진해 천장·벽 충돌). 그래서 7b차는 7차 4M 스냅샷에서
 우리 트랙 속도 제한(4 m/s 초과분에 보상 감점, `track.V_CAP`)과 데모를 함께 넣어 다시 시작합니다(8M 스텝):
 `./run.sh --collect-demos --team` 후 `./run.sh --finetune <7차 4M 스냅샷>/ckpt --team2 --demos demos_team`.
+7b차 8M은 우리 트랙 1랩 physical 39.5%(시뮬레이션 66.5%)였고, 실패는 split-S 탈출 중 바닥 충돌과 G3·G4 정밀도였습니다.
+그래서 7c차는 7b차 8M에서 학습 판정 창을 실제와 같은 0.45 m로, 속도 감점을 진행 보상의 2배에서 5배로 바꿔 phase-3 설정으로 3M 스텝 더 학습합니다(데모 없음):
+`./run.sh --finetune <7b차 run>/ckpt --team3`.
 
 ### 참고
 - SkyDreamer (https://arxiv.org/abs/2510.14783)

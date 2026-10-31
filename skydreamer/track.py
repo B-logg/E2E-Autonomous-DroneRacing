@@ -119,11 +119,15 @@ def rate_penalty(omega_b: jax.Array, f_c: float = CONTROL_FREQ) -> jax.Array:
 # Speed above the cap costs twice the progress it can buy (progress pays W_PROG
 # per metre, i.e. W_PROG / f_c per m/s per step), so the reward peaks at the cap.
 W_SPEED = 2.0 * W_PROG / CONTROL_FREQ
+# Run 7c's: five times the progress.  Run 7b's 8M agent still fell out of the
+# split-S at up to 8.5 m/s -- gravity's speed, which twice the progress did not
+# make it brake for -- and 30% of its flights ended on the ground there.
+W_SPEED_STRICT = 5.0 * W_PROG / CONTROL_FREQ
 
 
-def speed_penalty(v: jax.Array, v_cap: float) -> jax.Array:
-    """W_SPEED per m/s over `v_cap`, per step; 0 at or below it."""
-    return W_SPEED * jnp.maximum(jnp.linalg.norm(v, axis=-1) - v_cap, 0.0)
+def speed_penalty(v: jax.Array, v_cap: float, w: float = W_SPEED) -> jax.Array:
+    """`w` (W_SPEED) per m/s over `v_cap`, per step; 0 at or below it."""
+    return w * jnp.maximum(jnp.linalg.norm(v, axis=-1) - v_cap, 0.0)
 
 
 def gate_reward(p_g: jax.Array, d_g: float) -> jax.Array:

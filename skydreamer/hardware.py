@@ -11,7 +11,7 @@ from __future__ import annotations
 import numpy as np
 
 from .params import NOMINAL
-from .track import TEAM_INNER, TEAM_OUTER
+from .track import TEAM_INNER, TEAM_OUTER, W_SPEED_STRICT
 
 # --- gate (given) ----------------------------------------------------------
 GATE_INNER = 1.5      # m, clear opening edge length
@@ -80,12 +80,20 @@ OWN_GATE_D_G = {"team": (0.50, 0.45)}
 #   hwg_  the full profile, but our real gate (1.2 m opening, 1.5 m outer) on any
 #         layout, and a window between the two gates': train 0.60, eval 0.45 (the
 #         real one).  `hwg_inverted_loop` then `hwg_team`, before `hw_team`'s 0.50.
+#
+# Run 7c fine-tunes run 7b's 8M agent (39.5% physical, 66.5% in simulation) for
+# precision.  Its failures were the split-S exit (ground, 30%) and sim-clean
+# passes the real gate rejects (27%, at G3 and G4), so:
+#   hwp_  the full profile, but on our own gates (OWN_GATE_D_G) the train window
+#         is the eval one, 0.45 -- no leniency -- and speed over track.V_CAP costs
+#         track.W_SPEED_STRICT.  Scored as `hw_` (full_hw), so comparable to 7b.
 # `None` for d_g / t_g / twr means the paper's value.
 HW_STAGES = {
     "hw1_": dict(HW_PROFILE, gate_outer=2.4, twr=None, d_g=None, t_g=None),
     "hw2_": dict(HW_PROFILE, twr=None, d_g=None, t_g=None),
     "hw3_": dict(HW_PROFILE, d_g=None, t_g=None),
     "hwg_": dict(HW_PROFILE, gate_inner=TEAM_INNER, gate_outer=TEAM_OUTER, d_g=(0.60, 0.45)),
+    "hwp_": dict(HW_PROFILE, own_gate_d_g=(0.45, 0.45), w_speed=W_SPEED_STRICT),
     HW_PREFIX: HW_PROFILE,
 }
 
