@@ -31,6 +31,12 @@ invocation resuming from the previous phase's checkpoint in the same logdir.
     stage 4   7   -> 10M   hw_team, the paper's phase-3 fine-tune settings
     (./run.sh --finetune <ckpt> --team)
 
+  --finetune team4 (run 7d, 2M steps; docs/deviations.md)
+    run 7b's 8M agent, phase-3 settings throughout:
+    stage 1   0   -> 2M    hwr_team: train window 0.45, run 7b's speed penalty,
+                           crash at the real floor (track.FLOOR)
+    (./run.sh --finetune <run 7b ckpt> --team4)
+
   --finetune team3 (run 7c, 3M steps; docs/deviations.md)
     run 7b's 8M agent, phase-3 settings throughout:
     stage 1   0   -> 3M    hwp_team: train window 0.45 (= eval), speed penalty 5x progress (was 2x)
@@ -109,6 +115,11 @@ FINETUNE = {
     "team3": [
         (3.0e6, "hwp_team", PHASE_ARGS[3]),
     ],
+    # run 7d: run 7b's 8M agent again (37.5%; 7c's 3M was 25.5%), at 7c's window
+    # with 7b's speed penalty, on the floor that is really there (track.FLOOR).
+    "team4": [
+        (2.0e6, "hwr_team", PHASE_ARGS[3]),
+    ],
 }
 
 
@@ -124,8 +135,9 @@ def main() -> int:
     ap.add_argument("--finetune", nargs="?", const="hw", default=None, choices=sorted(FINETUNE),
                     help="fine-tune a finished agent in stages: hw (run 6, our drone), "
                          "team (run 7, our real track), team2 (run 7b, from run 7's 4M "
-                         "under the speed limit) or team3 (run 7c, from run 7b's 8M "
-                         "at the real window)")
+                         "under the speed limit), team3 (run 7c, from run 7b's 8M "
+                         "at the real window) or team4 (run 7d, as 7c with 7b's speed "
+                         "penalty and the real floor)")
     ap.add_argument("--steps-scale", type=float, default=1.0,
                     help="multiply every phase boundary (testing the phase chain end to end)")
     ap.add_argument("--dry-run", action="store_true")

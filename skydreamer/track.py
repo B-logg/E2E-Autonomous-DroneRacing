@@ -156,6 +156,14 @@ def gate_collision(p_g: jax.Array, d_g: float) -> jax.Array:
 RATE_DIVERGENCE = 50.0  # rad/s, per axis
 
 
+def floor_collision(p_w: jax.Array, euler: jax.Array, reach: float, clearance: float) -> jax.Array:
+    """The airframe's lowest point within `clearance` of the floor: the centre's
+    altitude less `reach` (centre to prop tip) times the sine of the tilt."""
+    cos_tilt = jnp.cos(euler[..., 0]) * jnp.cos(euler[..., 1])
+    sin_tilt = jnp.sqrt(jnp.clip(1.0 - cos_tilt ** 2, 0.0, 1.0))
+    return -p_w[..., 2] - reach * sin_tilt < clearance
+
+
 def diverged(omega_b: jax.Array, p_w: jax.Array, v_w: jax.Array) -> jax.Array:
     """True once the integration has left the physically meaningful region."""
     spun = jnp.max(jnp.abs(omega_b), axis=-1) > RATE_DIVERGENCE
@@ -395,6 +403,13 @@ ROOMS = {"team": (-4.0, 7.0, -4.0, 4.0, 3.5)}
 # to G3, 1.5 m below, has a ~0.75 m radius, which TWR ~4 can turn at ~4.8 m/s at
 # most, and the room leaves 3 m past G2.  4.0 keeps a margin under that.
 V_CAP = {"team": 4.0}
+# Floor clearance, m: tracks whose crash test is the airframe reaching the floor
+# (`floor_collision`), not section II-C's shaped z_w > -0.5 test (not in the paper).
+# That test ends a flight 0.5 m up if it descends or banks hard -- for the paper's
+# podium.  Our room's G1, G3 and G4 open 0.15-1.35 m, so it covered the bottom
+# third of three openings, and run 7b/7c renders all ended at exactly 0.5 m.
+# 0.10 m keeps a margin for ground effect, which the dynamics do not model.
+FLOOR = {"team": 0.10}
 
 
 def team_track() -> Track:

@@ -162,6 +162,8 @@ class SkyDreamer:
                 extra["v_cap"] = T.V_CAP[base]
                 if hw and "w_speed" in hw:
                     extra["w_speed"] = hw["w_speed"]
+            if base in T.FLOOR:
+                extra["floor"] = (hardware.REACH, T.FLOOR[base])
             self._cfg = EnvConfig(
                 track=track,
                 max_steps=self._max_steps,

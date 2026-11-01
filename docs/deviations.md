@@ -517,3 +517,35 @@ The renders' side view drew every gate as a vertical line at its centre, which i
 right only for a gate facing along Y; our room's gates face along X and are seen
 face-on there. It now draws the outer frame and the opening as squares, squeezed by
 how far the gate faces the viewer.
+
+### Run 7c's result, and run 7d: the real floor
+
+Run 7c, `physical` on `team`, 1 lap, 200 episodes (run 7b's 8M re-scored under the
+fixed protocol for comparison):
+
+| | 7b 8M | 7c 1M | 7c 2M | 7c 3M |
+|---|---|---|---|---|
+| physical | 37.5% | 13.0% | 28.5% | 25.5% |
+| sim only | 59.0% | 42.5% | 44.5% | 41.0% |
+| ended on the ground | 58 | 53 | 90 | 104 |
+| sim-clean, real gate fails | 43 | 59 | 32 | 31 |
+| worst point p90 / p99 [m] | 0.654 / 1.009 | 0.816 / 1.118 | 0.633 / 0.959 | 0.607 / 0.881 |
+| 1-lap time [s] | 4.53 | 5.64 | 5.46 | 5.41 |
+
+The 0.45 m window sharpened the gates (real-gate fails 43 -> 31, p99 1.01 -> 0.88).
+The 5x speed penalty did the opposite of its purpose: slower over G2, the policy
+dropped straight down the split-S instead of looping, and ground deaths doubled
+(stopped after 2 gates: 19 -> 44). Both were changed at once, which the next run avoids.
+
+Every render of 7b and 7c ended at exactly 0.5 m: section II-C's ground test
+(`z_w > -0.5` while descending or banked past 60 deg, for the paper's podium) covers
+the bottom third of G1, G3 and G4's openings (0.15-1.35 m). Some of those flights
+were falling at 5-6 m/s and would have hit the floor anyway; how many were not is
+what the per-episode dump (`evaluation_*_episodes.json`, every flight's end state and
+gate crossings) now records.
+
+Run 7d (`./run.sh --finetune <run 7b>/ckpt --team4`, 2M): from 7b's 8M, phase 3,
+- **the floor that is there**: `track.FLOOR`, a crash when the airframe's lowest prop
+  tip (`hardware.REACH`, 0.19 m, times the sine of the tilt) comes within 0.10 m of
+  the floor. It applies to every task on `team`, evaluation included;
+- **7c's window** (train 0.45 = eval, hardware `hwr_`), **7b's speed penalty**.

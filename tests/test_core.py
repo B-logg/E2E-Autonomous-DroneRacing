@@ -1003,6 +1003,9 @@ def test_finetune_schedule_names_real_tasks():
     # run 7c sharpens run 7b's 8M agent: one stage, phase 3 from the start
     assert [(s, t) for s, t, _ in train.FINETUNE["team3"]] == [(3e6, "hwp_team")]
     assert train.FINETUNE["team3"][0][2] == train.PHASE_ARGS[3]
+    # run 7d: 7c's window, 7b's speed penalty, the real floor
+    assert [(s, t) for s, t, _ in train.FINETUNE["team4"]] == [(2e6, "hwr_team")]
+    assert train.FINETUNE["team4"][0][2] == train.PHASE_ARGS[3]
 
 
 def test_forward_camera_moves_the_viewpoint():
@@ -1168,6 +1171,35 @@ def test_run_7c_trains_at_the_real_window_under_a_steeper_speed_penalty():
     # charged on the next state's speed, which gravity has just slowed a little
     over = (float(r_old) - float(r_new)) / (T.W_SPEED_STRICT - T.W_SPEED)
     assert 0.95 * (8.0 - T.V_CAP["team"]) < over <= 8.0 - T.V_CAP["team"]
+
+
+def test_our_room_crashes_at_its_floor_not_half_a_metre_up():
+    from skydreamer import hardware
+    from skydreamer.embodied_env import SkyDreamer
+
+    try:
+        for task in ("hw_team", "hwr_team", "hwp_team"):
+            cfg = SkyDreamer(task, max_steps=50, seed=1).cfg
+            assert cfg.floor == (hardware.REACH, T.FLOOR["team"]), task
+        assert SkyDreamer("hw_inverted_loop", max_steps=50, seed=1).cfg.floor is None
+        r = SkyDreamer("hwr_team", max_steps=50, seed=1).cfg
+    finally:
+        hardware.apply_dynamics(None)
+    assert r.d_g == (0.45, 0.45) and r.w_speed == T.W_SPEED
+    assert hardware.full_hw("hwr_team") == "hw_team"
+
+    reach, clear = hardware.REACH, T.FLOOR["team"]
+    p = lambda alt: jnp.array([0.0, 0.0, -alt])                     # noqa: E731
+    e = lambda deg: jnp.array([jnp.deg2rad(deg), 0.0, 0.0])         # noqa: E731
+    down = jnp.array([0.0, 0.0, 3.0])
+    # 0.45 m up, banked 70 deg and falling: II-C's test calls that the ground,
+    # though the lowest prop tip is still 0.27 m above it
+    assert bool(T.ground_collision(p(0.45), down, e(70.0)))
+    assert not bool(T.floor_collision(p(0.45), e(70.0), reach, clear))
+    # level just over the clearance flies; a prop tip at the clearance does not
+    assert not bool(T.floor_collision(p(clear + 0.02), e(0.0), reach, clear))
+    assert bool(T.floor_collision(p(clear - 0.02), e(0.0), reach, clear))
+    assert bool(T.floor_collision(p(clear + reach - 0.02), e(90.0), reach, clear))
 
 
 def test_team_finetune_stages_bring_our_gate_then_our_track():

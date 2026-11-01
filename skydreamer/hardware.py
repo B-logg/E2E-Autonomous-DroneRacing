@@ -24,6 +24,7 @@ PROP_R = 0.0635       # m, 5 in (physical radius; the dynamics' own 0.0486 is th
                       # 75% blade station and already matches a 5 in prop)
 CAM_FORWARD = 0.10    # m ahead of the CoM (given)
 CAM_TIP = 0.12        # m, forward extent of the camera mount (est.)
+REACH = DIAGONAL / 2 + PROP_R   # m, centre to prop tip: 0.19
 CAM_FOV = (114.6, 92.15)   # deg, horizontal x vertical (given); 720 x 480 px
 MASS = 1.0            # kg, all-up (team, 2026-10)
 MOTOR_THRUST = 1.024  # kgf per motor at full throttle (team, 2026-10)
@@ -87,6 +88,11 @@ OWN_GATE_D_G = {"team": (0.50, 0.45)}
 #   hwp_  the full profile, but on our own gates (OWN_GATE_D_G) the train window
 #         is the eval one, 0.45 -- no leniency -- and speed over track.V_CAP costs
 #         track.W_SPEED_STRICT.  Scored as `hw_` (full_hw), so comparable to 7b.
+#
+# Run 7c fell from 7b's 37.5% to 25.5%: its gate precision improved, but twice as
+# many flights ended on the ground, and the stricter penalty slowed it into
+# dropping straight down the split-S.  Run 7d keeps only the window:
+#   hwr_  `hwp_` with the speed penalty back at track.W_SPEED.
 # `None` for d_g / t_g / twr means the paper's value.
 HW_STAGES = {
     "hw1_": dict(HW_PROFILE, gate_outer=2.4, twr=None, d_g=None, t_g=None),
@@ -94,6 +100,7 @@ HW_STAGES = {
     "hw3_": dict(HW_PROFILE, d_g=None, t_g=None),
     "hwg_": dict(HW_PROFILE, gate_inner=TEAM_INNER, gate_outer=TEAM_OUTER, d_g=(0.60, 0.45)),
     "hwp_": dict(HW_PROFILE, own_gate_d_g=(0.45, 0.45), w_speed=W_SPEED_STRICT),
+    "hwr_": dict(HW_PROFILE, own_gate_d_g=(0.45, 0.45)),
     HW_PREFIX: HW_PROFILE,
 }
 

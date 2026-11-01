@@ -157,6 +157,12 @@ def protocol_config(cfg_env, name: str):
     return cfg_env._replace(train_fraction=spec["train_fraction"]), spec["d_g"]
 
 
+def _tilt_deg(q) -> float:
+    """Angle between body z and world z, from a (w, x, y, z) quaternion."""
+    w, x, y, z = q
+    return float(np.degrees(np.arccos(np.clip(1 - 2 * (x * x + y * y), -1.0, 1.0))))
+
+
 def rollout(agent, cfg_env, episodes: int, laps: int, seed: int, chunk: int = 64,
             force_d_g=None, physical: bool = False):
     """Drive the JAX env directly rather than through embodied's driver, so the
@@ -256,6 +262,10 @@ def _rollout(agent, cfg_env, episodes: int, laps: int, seed: int, chunk: int = 6
         steps = np.zeros(b, int)
         gate_times = [[] for _ in range(b)]
         gate_errs = [[] for _ in range(b)]
+        # For the per-episode dump: where each gate was crossed (gate frame, at
+        # its post plane) and how fast, and the state the flight ended in.
+        crossings = [[] for _ in range(b)]
+        end = [None] * b
         margin = np.full(b, np.inf)
         vmax = np.zeros(b)
         amax = np.zeros(b)
@@ -320,9 +330,13 @@ def _rollout(agent, cfg_env, episodes: int, laps: int, seed: int, chunk: int = 6
                 d_g = np.asarray(st.d_g)
                 t_g = np.asarray(st.t_g)
 
+            q = np.asarray(st.s.q)
             if physical:
                 trace_p.append(p.copy())
-                trace_q.append(np.asarray(st.s.q).copy())
+                trace_q.append(q.copy())
+            for i in np.nonzero(terminated)[0]:
+                end[i] = dict(step=t + 1, alt=float(-p[i, 2]), p=p[i].tolist(), v=v[i].tolist(),
+                              tilt_deg=_tilt_deg(q[i]))
 
             speed = np.linalg.norm(v, axis=-1)
             # Specific force, i.e. what an accelerometer would read: the paper's
@@ -346,6 +360,9 @@ def _rollout(agent, cfg_env, episodes: int, laps: int, seed: int, chunk: int = 6
                     )
                 off = np.maximum(np.abs(local[:, 1]), np.abs(local[:, 2]))
                 for i in np.nonzero(crossed)[0]:
+                    crossings[i].append(dict(gate=int((plane[i] - 1) // 3 % n_gates),
+                                             y=float(local[i, 1]), z=float(local[i, 2]),
+                                             speed=float(speed[i]), alt=float(-p[i, 2])))
                     gate_times[i].append((t + 1) * CONTROL_DT)
                     gate_errs[i].append(float(np.hypot(local[i, 1], local[i, 2])))
                     margin[i] = min(margin[i], float(d_g[i] - off[i]))
@@ -389,6 +406,8 @@ def _rollout(agent, cfg_env, episodes: int, laps: int, seed: int, chunk: int = 6
                     duration=float(steps[i] * CONTROL_DT),
                     gate_times=gate_times[i],
                     gate_err=gate_errs[i],
+                    crossings=crossings[i],
+                    end=end[i],
                     margin=float(margin[i]) if np.isfinite(margin[i]) else None,
                     vmax=float(vmax[i]),
                     amax=float(amax[i]),
@@ -675,6 +694,9 @@ def main() -> int:
     out.write_text(json.dumps(
         {"track": track, "protocol": args.protocol, "laps": args.laps, "hardware": hw, **summary}, indent=2))
     (logdir / f"{stem}.txt").write_text(text)
+    # Every episode, for working out *why* flights fail (crash state, where each
+    # gate was crossed); summaries alone could not answer that for run 7b/7c.
+    (logdir / f"{stem}_episodes.json").write_text(json.dumps(records))
     print(f"\nwrote {out}")
     return 0
 

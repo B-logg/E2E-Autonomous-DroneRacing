@@ -125,6 +125,9 @@ class EnvConfig(NamedTuple):
     v_cap: float | None = None
     # Its penalty per m/s over, per step.
     w_speed: float = trk.W_SPEED
+    # (reach, clearance) in m: crash when the airframe comes within `clearance` of
+    # the floor (track.floor_collision).  None = section II-C's shaped test.
+    floor: tuple[float, float] | None = None
 
 
 class EnvState(NamedTuple):
@@ -444,7 +447,10 @@ def step(state: EnvState, action: jax.Array, cfg: EnvConfig):
     reward = trk.W_PROG * r_prog - r_rate + trk.W_GATE * r_gate
 
     euler = quat_to_euler(s_next.q)
-    hit_ground = trk.ground_collision(s_next.p, s_next.v, euler)
+    if cfg.floor is not None:
+        hit_ground = trk.floor_collision(s_next.p, euler, *cfg.floor)
+    else:
+        hit_ground = trk.ground_collision(s_next.p, s_next.v, euler)
     blew_up = trk.diverged(s_next.omega_b, s_next.p, s_next.v)
     hit_wall = (trk.left_room(s_next.p, cfg.room) if cfg.room is not None
                 else jnp.array(False))
