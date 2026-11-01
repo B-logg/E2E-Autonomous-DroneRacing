@@ -116,7 +116,12 @@ PROTOCOLS = {
     #           is a crash.  The policy never observes d_g, so the flight itself is
     #           unchanged; only the verdict differs.  Combine with `--hw` to also
     #           give the simulator our gate frame, camera offset and thrust-to-weight.
-    "physical": dict(train_fraction=0.0, d_g=3.0, physical=True),
+    #           The sim window is 1.0 m, not off: `hardware.check_flight` leaves a
+    #           centre crossing more than `near` (1.4 m) out to another gate, so at
+    #           3 m a flight could go past a gate 1.4-3 m to the side, the sim would
+    #           count the gate and the check would not see it.  Any centre beyond
+    #           ~0.45 m fails the 0.6 m opening anyway, so 1.0 drops no real pass.
+    "physical": dict(train_fraction=0.0, d_g=1.0, physical=True),
 }
 
 # `--hw`: the simulator moved to our drone and gate (skydreamer/hardware.py).

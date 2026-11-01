@@ -880,6 +880,28 @@ def test_swept_footprint_check_uses_the_whole_airframe():
     assert check_flight(pos, q, [(np.zeros(3), 0.0, False)], len(pos), dt)[0]
 
 
+def test_physical_protocol_cannot_count_a_gate_flown_past():
+    """The swept check leaves a centre crossing more than `near` from a gate to
+    another gate (G2 sits 1.5 m above G3 on our track), so it must never be the
+    only judge of a crossing that far out: the sim's own window ends the flight
+    first.  At the old 3 m window a flight 1.4-3 m beside a gate passed both."""
+    import inspect
+
+    import numpy as np
+
+    from skydreamer.hardware import GATE_INNER, check_flight
+
+    ev = _load_evaluate()
+    near = inspect.signature(check_flight).parameters["near"].default
+    ok, events = check_flight(*_flight(near + 0.1)[:2], [(np.zeros(3), 0.0, True)], 60, 1 / 90)
+    assert ok and events == []                       # unseen by the swept check
+    d_g = ev.PROTOCOLS["physical"]["d_g"]
+    assert d_g <= near - 0.2                         # a step's drift short of `near`
+    assert bool(T.gate_collision(jnp.array([0.1, near - 0.1, 0.0]), d_g))
+    # and no flight a real opening passes is cut short by it
+    assert d_g >= max(T.TEAM_INNER, GATE_INNER) / 2
+
+
 def test_swept_footprint_check_depends_on_attitude():
     import numpy as np
 

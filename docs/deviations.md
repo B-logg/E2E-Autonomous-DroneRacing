@@ -495,3 +495,25 @@ Run 7c (`./run.sh --finetune <run 7b>/ckpt --team3`, 3M):
 `hwp_team` is scored as `hw_team`, so the numbers line up with the table above. Checks:
 at +1M, sim-only ≥55% (else the penalty was too steep: restart at 3x); at +2M, ground
 <20% and physical ≥50%; the aim at 3M is physical ≥60%.
+
+### Evaluation fix: a gate flown past could count as passed
+
+Under `--protocol physical` the sim's own window was 3 m (off), and the real-gate
+verdict came from `hardware.check_flight` alone. That check leaves a centre crossing
+more than `near` = 1.4 m from a gate to another gate (G2 sits 1.5 m above G3), so a
+flight that went past a gate 1.4-3 m to the side had the gate counted by the sim and
+was never seen by the check: a success. Such crossings happened -- the largest sim
+gate error in run 7b's 1-lap evaluations was 1.5-2.4 m, 3.2 m at 3 laps -- though
+whether any of them were in a "successful" flight is not in the saved results.
+The sim window under `physical` is now 1.0 m: a crossing past it ends the flight as a
+gate strike before the check could miss it, and any centre beyond ~0.45 m fails the
+0.6 m opening anyway, so no real pass is cut short. Run 7b's numbers above were taken
+before the fix; its 8M checkpoint is re-scored with it for comparison with run 7c.
+
+Training was never affected: it runs at the 0.50 / 0.45 m window, where a crossing
+outside ends the episode as a crash.
+
+The renders' side view drew every gate as a vertical line at its centre, which is
+right only for a gate facing along Y; our room's gates face along X and are seen
+face-on there. It now draws the outer frame and the opening as squares, squeezed by
+how far the gate faces the viewer.

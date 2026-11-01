@@ -208,14 +208,19 @@ def _draw_chase(ax, ep, i, track, res=CHASE_RES):
 
 
 def _gate_segments(track):
-    """Endpoints for drawing each gate edge-on in both views."""
+    """Each gate in both views: edge-on from above, and in the side view (Y,
+    altitude) its outer and inner squares squeezed by how far it faces the
+    viewer -- a line for a gate facing along Y, the full square for one facing
+    along X, like every gate of our room track."""
     pos, yaw = np.asarray(track.pos), np.asarray(track.yaw)
-    outer, vis = np.asarray(track.outer), np.asarray(track.visible)
+    outer, inner = np.asarray(track.outer), np.asarray(track.inner)
+    vis = np.asarray(track.visible)
     segs = []
-    for p, y, o, v in zip(pos, yaw, outer, vis):
+    for p, y, o, i_, v in zip(pos, yaw, outer, inner, vis):
         d = np.array([-np.sin(y), np.cos(y)])          # in-plane, horizontal
         a, b = p[:2] - d * o / 2, p[:2] + d * o / 2
-        segs.append(dict(top=(a, b), side=(p[1], -p[2], o), visible=bool(v)))
+        segs.append(dict(top=(a, b), side=(p[1], -p[2], o, i_, abs(float(d[1]))),
+                         visible=bool(v)))
     return segs
 
 
@@ -280,8 +285,12 @@ def _draw_gates(ax_top, ax_side, segs):
             color=MUTED, lw=2, linestyle=(0, (3, 2)))
         (a, b) = g["top"]
         ax_top.plot([a[1], b[1]], [a[0], b[0]], **style)
-        y, alt, o = g["side"]
-        ax_side.plot([y, y], [alt - o / 2, alt + o / 2], **style)
+        y, alt, o, i_, w = g["side"]
+        for half, lw in ((o / 2, style["lw"]), (i_ / 2, 1.0)):
+            hy = half * w
+            ax_side.plot([y - hy, y + hy, y + hy, y - hy, y - hy],
+                         [alt - half, alt - half, alt + half, alt + half, alt - half],
+                         **dict(style, lw=lw))
 
 
 def render(ep, track, out_stem, stride, fps, chase_res=CHASE_RES):
