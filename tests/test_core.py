@@ -1006,6 +1006,8 @@ def test_finetune_schedule_names_real_tasks():
     # run 7d: 7c's window, 7b's speed penalty, the real floor
     assert [(s, t) for s, t, _ in train.FINETUNE["team4"]] == [(2e6, "hwr_team")]
     assert train.FINETUNE["team4"][0][2] == train.PHASE_ARGS[3]
+    assert [(s, t) for s, t, _ in train.FINETUNE["team5"]] == [(3e6, "hwf_team")]
+    assert train.FINETUNE["team5"][0][2] == train.PHASE_ARGS[3]
 
 
 def test_forward_camera_moves_the_viewpoint():
@@ -1084,7 +1086,10 @@ def test_hw_team_keeps_our_gate_and_window_and_the_room_walls():
             m = 0.3 - 1e-5
             assert (p[:, 0] >= x_lo + m).all() and (p[:, 0] <= x_hi - m).all(), task
             assert (p[:, 1] >= y_lo + m).all() and (p[:, 1] <= y_hi - m).all(), task
-            assert (-p[:, 2] >= m).all() and (-p[:, 2] <= ceiling - m).all(), task
+            # launched starts (track.LAUNCH) rest on the floor; the rest stay off it
+            air = ~np.asarray(st.grounded)
+            assert np.allclose(-p[~air, 2], T.LAUNCH["team"][4]), task
+            assert (-p[air, 2] >= m).all() and (-p[:, 2] <= ceiling - m).all(), task
     finally:
         hardware.apply_dynamics(None)
     # the paper's tracks have no room
@@ -1200,6 +1205,171 @@ def test_our_room_crashes_at_its_floor_not_half_a_metre_up():
     assert not bool(T.floor_collision(p(clear + 0.02), e(0.0), reach, clear))
     assert bool(T.floor_collision(p(clear - 0.02), e(0.0), reach, clear))
     assert bool(T.floor_collision(p(clear + reach - 0.02), e(90.0), reach, clear))
+
+
+def _team_cfg(task):
+    from skydreamer import hardware
+    from skydreamer.embodied_env import SkyDreamer
+
+    try:
+        return SkyDreamer(task, max_steps=200, seed=1).cfg
+    finally:
+        hardware.apply_dynamics(None)
+
+
+def _launched(cfg, n=64):
+    """A batch of evaluation-column (launch) starts, under our drone's thrust."""
+    with jax.transfer_guard("allow"):
+        st, _ = jax.vmap(lambda k: reset(k, cfg._replace(train_fraction=0.0)))(
+            jax.random.split(jax.random.key(3), n))
+    return st
+
+
+def test_run_7e_launches_from_the_floor_in_front_of_g1():
+    from skydreamer import hardware
+
+    cfg = _team_cfg("hw_team")
+    d_lo, d_hi, y_half, yaw_half, rest = T.LAUNCH["team"]
+    assert cfg.launch == T.LAUNCH["team"] and cfg.w_floor == 0.0
+    assert cfg.air_start_alt == T.AIR_START["team"]
+    assert _team_cfg("hw_inverted_loop").launch is None
+    hardware.apply_dynamics(hardware.TWR_CENTRAL)
+    try:
+        st = _launched(cfg)
+        g1, yaw = np.asarray(cfg.track.pos[0]), float(cfg.track.yaw[0])
+        loc = (np.asarray(st.s.p) - g1) @ np.asarray(T.gate_rotation(yaw)).T
+        assert np.all((-loc[:, 0] >= d_lo - 1e-5) & (-loc[:, 0] <= d_hi + 1e-5))
+        assert np.all(np.abs(loc[:, 1]) <= y_half + 1e-5)
+        assert np.allclose(-np.asarray(st.s.p)[:, 2], rest)
+        eul = np.asarray(jax.vmap(quat_to_euler)(st.s.q))
+        assert np.allclose(eul[:, :2], 0.0, atol=1e-6)
+        assert np.all(np.abs(np.rad2deg(eul[:, 2] - yaw)) <= yaw_half + 1e-4)
+        assert np.allclose(np.asarray(st.s.motor), np.asarray(st.params.w_min)[:, None])
+        assert np.all(np.asarray(st.grounded)) and not np.any(np.asarray(st.airborne))
+
+        # the training column still starts mid-air in front of any gate, never
+        # lower than air_start_alt (Table III's range is under our floor)
+        with jax.transfer_guard("allow"):
+            tr, _ = jax.vmap(lambda k: reset(k, cfg._replace(train_fraction=1.0)))(
+                jax.random.split(jax.random.key(4), 256))
+        assert np.all(-np.asarray(tr.s.p)[:, 2] >= cfg.air_start_alt - 1e-5)
+        assert not np.any(np.asarray(tr.grounded)) and np.all(np.asarray(tr.airborne))
+    finally:
+        hardware.apply_dynamics(None)
+
+
+def test_the_floor_holds_a_launched_drone_until_it_climbs():
+    from skydreamer import hardware
+
+    cfg = _team_cfg("hw_team")
+    hardware.apply_dynamics(hardware.TWR_CENTRAL)
+    try:
+        st = _launched(cfg, 16)
+        p0 = np.asarray(st.s.p)
+        step_b = jax.jit(jax.vmap(lambda s, u: env_step(s, u, cfg)))
+        with jax.transfer_guard("allow"):
+            idle = jnp.zeros((16, 4))
+            for _ in range(60):                       # motors at idle: it stays put
+                st, _, r, term, _ = step_b(st, idle)
+                assert not np.any(np.asarray(term))
+            assert np.allclose(np.asarray(st.s.p), p0, atol=1e-6)
+            assert np.allclose(np.asarray(st.s.v), 0.0)
+            assert np.all(np.asarray(st.grounded))
+            full = jnp.ones((16, 4))
+            for _ in range(7):                        # full throttle: it lifts off
+                st, _, r, term, _ = step_b(st, full)
+                assert not np.any(np.asarray(term))
+        # (open loop the motors' moment imbalance rolls it ~25 deg by 0.1 s, and a
+        # prop tip touches the floor -- holding it level is the policy's job)
+        assert not np.any(np.asarray(st.grounded))
+        assert np.all(-np.asarray(st.s.p)[:, 2] > T.LAUNCH["team"][4] + 0.001)
+        assert np.all(np.asarray(st.s.v)[:, 2] < 0.0)
+        assert not np.any(np.asarray(st.airborne))
+        # clear of the floor's crash clearance at any tilt: the floor rule takes over
+        one = jax.tree.map(lambda a: a[0], st)
+        one = one._replace(s=one.s._replace(p=one.s.p.at[2].set(-0.30), v=jnp.array([0.0, 0.0, -1.0]),
+                                            q=euler_to_quat(0.0, 0.0, cfg.track.yaw[0]),
+                                            omega_b=jnp.zeros(3)))
+        with jax.transfer_guard("allow"):
+            one, _, _, term, _ = env_step(one, jnp.full(4, 0.6), cfg)
+        assert bool(one.airborne) and not bool(term)
+    finally:
+        hardware.apply_dynamics(None)
+
+
+def test_a_launched_drone_crashes_on_a_prop_tip_or_a_hard_touchdown():
+    from skydreamer import hardware
+
+    cfg = _team_cfg("hw_team")
+    rest = T.LAUNCH["team"][4]
+    hardware.apply_dynamics(hardware.TWR_CENTRAL)
+    try:
+        st = jax.tree.map(lambda a: a[0], _launched(cfg, 1))
+        hover = jnp.full(4, 0.0)
+
+        def after(alt, vz, roll_deg):
+            s = st._replace(grounded=jnp.array(False), s=st.s._replace(
+                p=st.s.p.at[2].set(-alt), v=jnp.array([0.0, 0.0, vz]),
+                q=euler_to_quat(jnp.deg2rad(roll_deg), 0.0, 0.0)))
+            with jax.transfer_guard("allow"):
+                new, _, _, term, _ = env_step(s, hover, cfg)
+            return new, bool(term), int(new.term_cause)
+
+        # came back down gently: rests on the floor again
+        new, term, _ = after(rest + 0.002, 0.5, 0.0)
+        assert not term and bool(new.grounded) and float(new.s.v[2]) == 0.0
+        # came down at 2 m/s: II-C's v_z > 1
+        _, term, cause = after(rest + 0.002, 2.0, 0.0)
+        assert term and cause == 2
+        # banked 30 deg 8 cm up: a prop tip is on the floor
+        _, term, cause = after(0.08, 0.0, 30.0)
+        assert term and cause == 2
+        # 8 cm up and level, climbing: below floor's 0.10 m clearance, but not yet
+        # clear of the floor it took off from, so not a crash
+        _, term, _ = after(0.08, -1.0, 0.0)
+        assert not term
+    finally:
+        hardware.apply_dynamics(None)
+
+
+def test_floor_penalty_charges_a_sink_it_could_not_stop_and_nothing_else():
+    reach, clear = 0.19, T.FLOOR["team"]
+    lvl = jnp.zeros(3)
+    pen = lambda alt, vz: float(T.floor_penalty(                          # noqa: E731
+        jnp.array([0.0, 0.0, -alt]), jnp.array([3.0, 0.0, vz]), lvl, reach, clear))
+    # the fit it encodes: a sink at safe_descent(room) stops in exactly `room`
+    for room in (0.05, 0.2, 0.6):
+        v = float(T.safe_descent(jnp.asarray(room)))
+        assert abs(v * T.FLOOR_LAG + v * v / (2 * T.FLOOR_DECEL) - room) < 1e-5
+    # level or climbing is free at any height; high up a fast sink is free too
+    assert pen(0.2, 0.0) == 0.0 and pen(0.2, -2.0) == 0.0 and pen(2.0, 3.0) == 0.0
+    # run 7d's finishers crossed G3 at a 0.73 m prop tip sinking 2.0 m/s: free
+    assert pen(0.73, 1.95) == 0.0
+    # 0.4 m up and still sinking 2 m/s: it could no longer stop above the buffer
+    assert pen(0.40, 2.0) > 0.0
+    edge = clear + T.FLOOR_BUFFER
+    assert pen(edge, 0.3) == pytest.approx(T.W_FLOOR * 0.3, rel=1e-4)
+    # 5x the progress a m/s of sink buys, and only on the hwf_ stage
+    assert T.W_FLOOR == pytest.approx(5 * T.W_PROG / T.CONTROL_FREQ)
+    assert _team_cfg("hwf_team").w_floor == T.W_FLOOR
+    assert _team_cfg("hwr_team").w_floor == 0.0
+    from skydreamer import hardware
+    assert hardware.full_hw("hwf_team") == "hw_team"
+    # and it reaches the reward
+    cfg = _team_cfg("hwf_team")
+    hardware.apply_dynamics(hardware.TWR_CENTRAL)
+    try:
+        with jax.transfer_guard("allow"):
+            st, _ = reset(jax.random.key(0), cfg._replace(train_fraction=1.0))
+            sink = st._replace(s=st.s._replace(p=st.s.p.at[2].set(-0.35),
+                                               v=jnp.array([0.0, 0.0, 2.5]),
+                                               q=euler_to_quat(0.0, 0.0, cfg.track.yaw[0])))
+            u = jnp.full(4, 0.3)
+            _, _, r_on, *_ = env_step(sink, u, cfg)
+            _, _, r_off, *_ = env_step(sink, u, cfg._replace(w_floor=0.0))
+        assert float(r_off) - float(r_on) > 0.1
+    finally:
+        hardware.apply_dynamics(None)
 
 
 def test_team_finetune_stages_bring_our_gate_then_our_track():

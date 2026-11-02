@@ -128,6 +128,14 @@ class EnvConfig(NamedTuple):
     # (reach, clearance) in m: crash when the airframe comes within `clearance` of
     # the floor (track.floor_collision).  None = section II-C's shaped test.
     floor: tuple[float, float] | None = None
+    # The evaluation column's start on the floor in front of the start gate
+    # (track.LAUNCH): (distance lo, hi, lateral half-range, yaw half-range deg,
+    # resting centre altitude).  Needs `floor`.  None = Table III's mid-air start.
+    launch: tuple[float, float, float, float, float] | None = None
+    # Lowest altitude of a mid-air start, m; None = only the room clip.
+    air_start_alt: float | None = None
+    # track.floor_penalty's weight; 0 = off.  Needs `floor`.
+    w_floor: float = 0.0
 
 
 class EnvState(NamedTuple):
@@ -169,6 +177,11 @@ class EnvState(NamedTuple):
     # fixes.  0 = still flying, 1 = gate, 2 = ground, 3 = divergence,
     # 4 = wall or ceiling (`EnvConfig.room`).
     term_cause: jax.Array
+    # `EnvConfig.launch`: resting on the floor (the floor holds it up), and whether
+    # it has climbed clear since -- until then the floor is something it stands
+    # on, not `floor`'s crash clearance.  False / True for a mid-air start.
+    grounded: jax.Array
+    airborne: jax.Array
 
 
 def _mix(a: float, b: float, use_train: jax.Array) -> jax.Array:
@@ -213,19 +226,26 @@ def reset(key: jax.Array, cfg: EnvConfig) -> tuple[EnvState, dict]:
     n = cfg.track.n_gates
     start_gate = jnp.where(use_train, jax.random.randint(k[3], (), 0, n), 0)
 
+    gate_pos = cfg.track.pos[start_gate]
+    gate_yaw = cfg.track.yaw[start_gate]
+    R_wg = trk.gate_rotation(gate_yaw).T  # gate -> world
+
     ks = jax.random.split(k[4], 6)
     x_g = jax.random.uniform(ks[0], minval=TRAIN.init_x_g[0], maxval=TRAIN.init_x_g[1])
     y_g = jax.random.uniform(ks[1], minval=TRAIN.init_y_g[0], maxval=TRAIN.init_y_g[1])
-    z_g = jax.random.uniform(ks[2], minval=b["z_lo"], maxval=TRAIN.init_z_g[1])
+    z_lo, z_hi = b["z_lo"], TRAIN.init_z_g[1]
+    if cfg.air_start_alt is not None:
+        # Table III's 0-1.3 m below a gate whose centre is 0.75 m up is under the
+        # floor; draw from the part of the range that is at least this high.
+        z_hi = jnp.minimum(z_hi, -gate_pos[2] - cfg.air_start_alt)
+        z_lo = jnp.minimum(z_lo, z_hi)
+    z_g = jax.random.uniform(ks[2], minval=z_lo, maxval=z_hi)
     rates = jax.random.uniform(ks[3], (3,), minval=TRAIN.init_rate[0], maxval=TRAIN.init_rate[1])
     motor_frac = jax.random.uniform(
         ks[4], (4,), minval=TRAIN.init_motor[0], maxval=TRAIN.init_motor[1]
     )
     att = jax.random.uniform(ks[5], (3,), minval=TRAIN.init_att[0], maxval=TRAIN.init_att[1])
 
-    gate_pos = cfg.track.pos[start_gate]
-    gate_yaw = cfg.track.yaw[start_gate]
-    R_wg = trk.gate_rotation(gate_yaw).T  # gate -> world
     p_w = gate_pos + R_wg @ jnp.stack([x_g, y_g, z_g])
     if cfg.room is not None:
         # Table III starts 2-4 m before the gate, which in a small room can be
@@ -235,13 +255,30 @@ def reset(key: jax.Array, cfg: EnvConfig) -> tuple[EnvState, dict]:
         p_w = jnp.clip(p_w, jnp.array([x_lo + m, y_lo + m, -ceiling + m]),
                        jnp.array([x_hi - m, y_hi - m, -m]))
     q = euler_to_quat(att[0], att[1], gate_yaw + att[2])
+    motor = initial_motor_speeds(motor_frac, params)
+
+    launch = jnp.array(False)
+    if cfg.launch is not None:
+        # The real start: at rest on the floor, level, motors at idle, facing the
+        # start gate from `d` m out.  Its own key, so the other draws are unchanged.
+        d_lo, d_hi, y_half, yaw_half, rest = cfg.launch
+        kl = jax.random.split(jax.random.fold_in(k[4], 1), 3)
+        d = jax.random.uniform(kl[0], minval=d_lo, maxval=d_hi)
+        y_l = jax.random.uniform(kl[1], minval=-y_half, maxval=y_half)
+        yaw_l = jax.random.uniform(kl[2], minval=-yaw_half, maxval=yaw_half) * jnp.pi / 180.0
+        p_l = (gate_pos + R_wg @ jnp.stack([-d, y_l, 0.0])).at[2].set(-rest)
+        launch = ~use_train
+        p_w = jnp.where(launch, p_l, p_w)
+        q = jnp.where(launch, euler_to_quat(0.0, 0.0, gate_yaw + yaw_l), q)
+        rates = jnp.where(launch, 0.0, rates)
+        motor = jnp.where(launch, params.w_min * jnp.ones(4), motor)
 
     s = State(
         p=p_w,
         v=jnp.zeros(3),
         q=q,
         omega_b=rates,
-        motor=initial_motor_speeds(motor_frac, params),
+        motor=motor,
     )
 
     plane = start_gate * trk.PLANES_PER_GATE
@@ -282,6 +319,8 @@ def reset(key: jax.Array, cfg: EnvConfig) -> tuple[EnvState, dict]:
         # D-1 step delay -- 22 ms instead of the paper's 33 ms.
         mask_buf=jnp.zeros((IMAGE_DELAY_STEPS + 1, cfg.image_size, cfg.image_size)),
         term_cause=jnp.array(0, jnp.int32),
+        grounded=launch,
+        airborne=~launch,
     )
     # Prime the image buffer so the first observations are consistent rather
     # than blank; the real drone likewise has valid frames before it launches.
@@ -424,6 +463,9 @@ def step(state: EnvState, action: jax.Array, cfg: EnvConfig):
     params = state.params._replace(w_max=state.params.w_max + w_max_offset)
 
     s_next = dyn_step(state.s, u_exec, dist, params)
+    grounded, airborne, launch_crash = state.grounded, state.airborne, jnp.array(False)
+    if cfg.launch is not None:
+        s_next, grounded, airborne, launch_crash = _floor_contact(state, s_next, cfg)
 
     # --- plane crossing, reward, termination
     target, _, _ = trk.plane_pose(cfg.track, state.plane, state.t_g)
@@ -441,14 +483,18 @@ def step(state: EnvState, action: jax.Array, cfg: EnvConfig):
     active = (state.plane % trk.PLANES_PER_GATE) == 0
     r_prog = jnp.where(active, state.prev_dist - dist_now, 0.0)
 
+    euler = quat_to_euler(s_next.q)
     r_rate = trk.rate_penalty(s_next.omega_b)
     if cfg.v_cap is not None:
         r_rate = r_rate + trk.speed_penalty(s_next.v, cfg.v_cap, cfg.w_speed)
+    if cfg.w_floor:
+        r_rate = r_rate + trk.floor_penalty(s_next.p, s_next.v, euler, *cfg.floor, cfg.w_floor)
     reward = trk.W_PROG * r_prog - r_rate + trk.W_GATE * r_gate
 
-    euler = quat_to_euler(s_next.q)
     if cfg.floor is not None:
         hit_ground = trk.floor_collision(s_next.p, euler, *cfg.floor)
+        if cfg.launch is not None:
+            hit_ground = jnp.where(airborne, hit_ground, launch_crash)
     else:
         hit_ground = trk.ground_collision(s_next.p, s_next.v, euler)
     blew_up = trk.diverged(s_next.omega_b, s_next.p, s_next.v)
@@ -494,6 +540,8 @@ def step(state: EnvState, action: jax.Array, cfg: EnvConfig):
         done=terminal,
         action_buf=action_buf,
         term_cause=term_cause,
+        grounded=grounded,
+        airborne=airborne,
     )
 
     # --- image delay: the policy sees a frame IMAGE_DELAY_STEPS old
@@ -502,6 +550,33 @@ def step(state: EnvState, action: jax.Array, cfg: EnvConfig):
 
     truncated = new.step_count >= cfg.max_steps
     return new, observe(new, cfg), reward, terminal, truncated
+
+
+def _floor_contact(state: EnvState, s_next: State, cfg: EnvConfig):
+    """The floor under a launched drone, until it first climbs clear of it.
+
+    Below its resting height, level enough that no prop tip touches and slower
+    than track.TOUCHDOWN_SPEED, the drone rests: the floor holds it, level, where
+    it was (it does not slide or turn on the floor), motors still spinning.  A
+    prop tip on the floor, or coming down faster, is a crash.  Clear means above
+    `floor`'s clearance plus the airframe's reach, where `floor_collision` cannot
+    fire at any tilt, and from then on that is the floor's only rule.
+
+    Returns (state, grounded, airborne, crashed)."""
+    reach, clearance = cfg.floor
+    rest = cfg.launch[4]
+    alt = -s_next.p[2]
+    euler = quat_to_euler(s_next.q)
+    tip = trk.lowest_point(s_next.p, euler, reach) < 0.0
+    down = alt <= rest
+    settle = ~state.airborne & down & ~tip & (s_next.v[2] <= trk.TOUCHDOWN_SPEED)
+    p_rest = jnp.where(state.grounded, state.s.p, s_next.p).at[2].set(-rest)
+    q_rest = jnp.where(state.grounded, state.s.q, euler_to_quat(0.0, 0.0, euler[2]))
+    rested = s_next._replace(p=p_rest, v=jnp.zeros(3), q=q_rest, omega_b=jnp.zeros(3))
+    s = jax.tree.map(lambda a, b: jnp.where(settle, a, b), rested, s_next)
+    airborne = state.airborne | (alt > clearance + reach)
+    crashed = ~airborne & ~settle & (tip | down)
+    return s, settle, airborne, crashed
 
 
 def gates_passed(state: EnvState) -> jax.Array:

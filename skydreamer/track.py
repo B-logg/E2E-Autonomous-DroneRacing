@@ -156,12 +156,66 @@ def gate_collision(p_g: jax.Array, d_g: float) -> jax.Array:
 RATE_DIVERGENCE = 50.0  # rad/s, per axis
 
 
-def floor_collision(p_w: jax.Array, euler: jax.Array, reach: float, clearance: float) -> jax.Array:
-    """The airframe's lowest point within `clearance` of the floor: the centre's
-    altitude less `reach` (centre to prop tip) times the sine of the tilt."""
+def lowest_point(p_w: jax.Array, euler: jax.Array, reach: float) -> jax.Array:
+    """Altitude of the airframe's lowest prop tip: the centre's altitude less
+    `reach` (centre to prop tip) times the sine of the tilt."""
     cos_tilt = jnp.cos(euler[..., 0]) * jnp.cos(euler[..., 1])
     sin_tilt = jnp.sqrt(jnp.clip(1.0 - cos_tilt ** 2, 0.0, 1.0))
-    return -p_w[..., 2] - reach * sin_tilt < clearance
+    return -p_w[..., 2] - reach * sin_tilt
+
+
+def floor_collision(p_w: jax.Array, euler: jax.Array, reach: float, clearance: float) -> jax.Array:
+    """The airframe's lowest point within `clearance` of the floor."""
+    return lowest_point(p_w, euler, reach) < clearance
+
+
+# NOT FROM THE PAPER.  Runs 7b-7d lost 14-28% of their flights on the floor
+# between G3 and G4: run 7d's 2M crossed G3 still sinking at 2.7 m/s (the
+# finishers at 2.0) and hit the floor 0.4 s later.  The airframe could have
+# stopped: a TWR-2.4 airframe (5th percentile of training) at 35 deg tilt, full
+# throttle after the action delay, stops 1.3 m/s within ~0.1 m.  What it lacks
+# is the altitude -- no sensor measures it, and the world model's position is
+# off by ~0.3 m -- and a crash pays nothing (II-C), only the lost future, which
+# the world model, unsure of the altitude, does not foresee: over run 7d its
+# continuation loss rose and its training score fell 134 -> 81 while it learned
+# to fly lower.  Section II-C's ground test had been doing this job for 7b: it
+# ended any flight descending below 0.5 m.
+#
+# The penalty is the sink speed over what can still be stopped above
+# `FLOOR_BUFFER`: room = the lowest prop tip's height above the crash clearance
+# less the buffer, a stopping distance v * FLOOR_LAG + v^2 / (2 FLOOR_DECEL), and
+# W_FLOOR per m/s over per step.  Level or climbing flight costs nothing at any
+# height, so it does not push the gates up; the takeoff climbs and costs nothing.
+#
+# Calibrated on run 7d's 2M flights (200, ground truth, after G2; docs/deviations.md):
+# buffer and decel were swept for how much the finishers pay against the floor
+# deaths.  At (0.5, 12) -- the physics alone, TWR 2.4 -- finishers paid 36.5 and
+# the deaths 77.7, and 9 in 10 finishers were charged.  At (0.2, 20) the finishers
+# pay 4.1, the deaths 34.1, every death pays more than 9 finishers in 10, and the
+# charge starts 0.29 s before the impact (10th percentile 0.19 s) -- 26 steps of
+# warning, against a stop that takes ~0.1 s.  0.2 m is also about one standard
+# deviation of the world model's altitude (its 3-D error is 0.28 m).
+FLOOR_LAG = 0.04      # s, action delay + motor spin-up, fitted to the simulator
+FLOOR_DECEL = 20.0    # m/s^2; (TWR 3.4 - 1) g, a median airframe banked 35 deg
+FLOOR_BUFFER = 0.2    # m
+# Five times the progress a m/s buys (like W_SPEED_STRICT), so diving at G3,
+# which is progress toward it, still loses.  7c's global 5x slowed the whole
+# lap; this one is zero while level, climbing, or high enough to stop.  Run 7d's
+# finishers would pay 1.1 a flight, its floor deaths 9.5 -- a third of a gate.
+W_FLOOR = 5.0 * W_PROG / CONTROL_FREQ
+
+
+def safe_descent(room: jax.Array, decel: float = FLOOR_DECEL, lag: float = FLOOR_LAG) -> jax.Array:
+    """Fastest sink, m/s, that stops within `room` m: v * lag + v^2 / (2 decel) = room."""
+    room = jnp.maximum(room, 0.0)
+    return decel * (jnp.sqrt(lag ** 2 + 2.0 * room / decel) - lag)
+
+
+def floor_penalty(p_w: jax.Array, v_w: jax.Array, euler: jax.Array, reach: float,
+                  clearance: float, w: float = W_FLOOR, buffer: float = FLOOR_BUFFER) -> jax.Array:
+    """`w` per m/s of sink over `safe_descent`, per step; 0 when level or climbing."""
+    room = lowest_point(p_w, euler, reach) - clearance - buffer
+    return w * jnp.maximum(v_w[..., 2] - safe_descent(room), 0.0)
 
 
 def diverged(omega_b: jax.Array, p_w: jax.Array, v_w: jax.Array) -> jax.Array:
@@ -410,6 +464,26 @@ V_CAP = {"team": 4.0}
 # third of three openings, and run 7b/7c renders all ended at exactly 0.5 m.
 # 0.10 m keeps a margin for ground effect, which the dynamics do not model.
 FLOOR = {"team": 0.10}
+# Where the real drone starts: on the floor, in front of G1, facing it.  Run 7e's
+# evaluation column starts every flight there, not Table III's 0.7-1.3 m below the
+# gate -- in our room that is under the floor, and the room clip put all of them at
+# 0.3 m, falling, banked up to 20 deg: 14-25% of evaluation flights died there.
+#   (distance lo, hi from G1's plane to the centre, m; lateral +-, m; yaw +-, deg;
+#    centre altitude at rest, m (est.))
+# The team can put it anywhere 1-2 m out.  2.0 m: the shallowest climb to G1's centre
+# (19 deg, against 35 at 1 m), the most time for the world model to settle before
+# the first gate (its first 20 steps are its worst, 0.36 m), and the only distance
+# in that range the agent has flown G1 from -- every start it has had was 2.0-2.7 m
+# out.  1.8-2.0 covers placing it a little short.  The climb itself is no limit:
+# a TWR-2.4 airframe reaches 0.75 m in 0.37 s.
+LAUNCH = {"team": (1.8, 2.0, 0.15, 5.0, 0.05)}
+# Lowest mid-air start (the training column), m: G1, G3 and G4's centres are at
+# 0.75, and Table III's 0-1.3 m below them is under the floor.  0.6 m keeps a start
+# inside the bottom of the opening and clear of the floor penalty's reach.
+AIR_START = {"team": 0.6}
+# A launched drone that comes back down slower than this settles on the floor
+# again; faster is a crash -- section II-C's v_z > 1 m/s.
+TOUCHDOWN_SPEED = 1.0
 
 
 def team_track() -> Track:

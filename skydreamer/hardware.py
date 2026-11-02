@@ -93,6 +93,13 @@ OWN_GATE_D_G = {"team": (0.50, 0.45)}
 # many flights ended on the ground, and the stricter penalty slowed it into
 # dropping straight down the split-S.  Run 7d keeps only the window:
 #   hwr_  `hwp_` with the speed penalty back at track.W_SPEED.
+#
+# Run 7d's 1M scored 33% (50.8% at our drone's TWR, 3.5-4.5): its losses were
+# sinking to the floor after G3 (21%), G4's window (11%) and the mid-air start
+# (8%).  The start is now the real one for every track with a track.LAUNCH, in
+# training's evaluation column and in evaluation.  Run 7e adds:
+#   hwf_  `hwr_` plus track.floor_penalty on a sink the drone could no longer stop
+#         above track.FLOOR_BUFFER.
 # `None` for d_g / t_g / twr means the paper's value.
 HW_STAGES = {
     "hw1_": dict(HW_PROFILE, gate_outer=2.4, twr=None, d_g=None, t_g=None),
@@ -101,6 +108,7 @@ HW_STAGES = {
     "hwg_": dict(HW_PROFILE, gate_inner=TEAM_INNER, gate_outer=TEAM_OUTER, d_g=(0.60, 0.45)),
     "hwp_": dict(HW_PROFILE, own_gate_d_g=(0.45, 0.45), w_speed=W_SPEED_STRICT),
     "hwr_": dict(HW_PROFILE, own_gate_d_g=(0.45, 0.45)),
+    "hwf_": dict(HW_PROFILE, own_gate_d_g=(0.45, 0.45), floor_penalty=True),
     HW_PREFIX: HW_PROFILE,
 }
 

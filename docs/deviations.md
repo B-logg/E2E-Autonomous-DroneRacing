@@ -549,3 +549,77 @@ Run 7d (`./run.sh --finetune <run 7b>/ckpt --team4`, 2M): from 7b's 8M, phase 3,
   tip (`hardware.REACH`, 0.19 m, times the sine of the tilt) comes within 0.10 m of
   the floor. It applies to every task on `team`, evaluation included;
 - **7c's window** (train 0.45 = eval, hardware `hwr_`), **7b's speed penalty**.
+
+### Run 7d's result, and run 7e: the real launch and a floor penalty
+
+Run 7d, `physical` on `team`, 1 lap, 200 episodes, mid-air start (the protocol every
+run so far was scored under; `evaluate.py --air-start` keeps it):
+
+| | 7b 8M | 7d 1M | 7d 2M |
+|---|---|---|---|
+| physical | 37.5% | 33.0% | 32.0% |
+| at our drone's TWR (3.5-4.5, n=63) | 49.2% | 50.8% | 39.7% |
+| sim only | 59.0% | 55.5% | 49.5% |
+| on the floor after G3 | 28 | 45 | 56 |
+| on the floor before G1 (the start) | 30 | 28 | 27 |
+| G3 crossing altitude, finishers / floor deaths [m] | 0.84 / 0.72 | 0.80 / 0.65 | 0.73 / 0.64 |
+
+Run 7d got worse as it trained. Its training score fell 134 -> 81 and its episodes
+shortened 335 -> 242 steps, while the world model's position and velocity losses rose
+(0.027 -> 0.030, 0.163 -> 0.186) and so did its continuation loss (0.0300 -> 0.0320).
+Under the real floor the policy learned to fly lower -- G3 0.85 -> 0.71 m, crossed at
+6.9 m/s and still sinking 2.7 m/s -- and the world model, which has no altitude
+sensor and is ~0.3 m off, does not foresee the floor, so imagination rated it safe.
+Section II-C's ground test had kept 7b off it: it ended any flight descending below
+0.5 m. Run 7e starts from 7b's 8M, not 7d's.
+
+**The start was not the real one.** Table III starts 0.7-1.3 m below the start gate;
+G1's centre is 0.75 m up, so the room clip put every evaluation flight at 0.3 m,
+falling, banked up to 20 deg -- 14-25% of evaluation flights died there, and they
+say nothing about the real drone, which takes off from the floor. `track.LAUNCH` now
+starts every evaluation-column flight (training's 30%, and all of evaluation) at rest
+on the floor in front of G1, level, motors at idle, facing it. The team can put it
+anywhere 1-2 m out; 2.0 m was chosen:
+
+| distance from G1's plane | 1.0 m | 1.5 m | 2.0 m |
+|---|---|---|---|
+| climb angle to G1's centre | 35 deg | 25 deg | 19 deg |
+| G1 pixels in the first frame (cam 50 deg) | 402 | 185 | 118 |
+| within the 2.0-2.7 m every past start used | no | no | yes |
+
+A TWR-2.4 airframe reaches 0.75 m in 0.37 s, so the climb is no limit at any of them.
+What decides it is the world model, whose first 20 steps are its worst (0.36-0.51 m):
+2.0 m gives it the most time before the first gate, at the approach it already knows.
+Training draws 1.8-2.0 m, +-0.15 m lateral, +-5 deg yaw for placement error.
+
+The floor holds the drone until its thrust lifts it, without sliding or turning; a prop
+tip on the floor or a touchdown faster than 1 m/s (II-C's v_z) is a crash, and above
+0.29 m (`FLOOR` + reach) `floor_collision` takes over. A launch can be flown: a cascade
+controller on ground truth, under evaluation randomization and disturbances, climbing
+level to 0.25 m first, lost 2 of 200 takeoffs (0 without the moment disturbances);
+pushing toward the gate from the floor lost 7-12%. Run 7d's 2M lost 148 of 200
+(8.0% physical): it lifts off at 0.09 s and pitches 2-4 deg per step toward the gate,
+as if mid-air, and a prop tip meets the floor at 6-8 cm and 19-28 deg, 0.13 s in.
+Mid-air training starts keep Table III's range above `AIR_START` (0.6 m).
+
+**The floor penalty** (`track.floor_penalty`, hardware `hwf_`) charges sinking faster
+than the drone could still stop above a buffer. It was calibrated on run 7d's 2M
+flights (`evaluate.py --dump`: ground-truth p, v, q per step), after G2, where the
+floor deaths happen:
+
+| buffer, decel | finishers pay | floor deaths pay | deaths above finishers' p90 | warning before impact (median / p10) |
+|---|---|---|---|---|
+| 0.5 m, 12 m/s^2 (physics alone) | 36.5 | 77.7 | 73% | 0.65 / 0.36 s |
+| 0.2 m, 12 m/s^2 | 8.0 | 41.6 | 85% | 0.38 / 0.23 s |
+| **0.2 m, 20 m/s^2** | **4.1** | **34.1** | **100%** | **0.29 / 0.19 s** |
+| 0.1 m, 20 m/s^2 | 1.4 | 22.2 | 100% | 0.23 / 0.13 s |
+
+(m/s over the limit, summed over steps.) Finishers cross G3 sinking 2.0 m/s at a
+0.73 m prop tip, so a split-S that bottoms just past G3 is normal flying; the first
+choice, from the stopping physics alone, would have charged 9 finishers in 10. At
+(0.2, 20) and W_FLOOR = 5x the progress per m/s, a finisher pays 1.1 a flight and a
+floor death 9.5 -- a third of a gate -- starting 26 steps before the impact.
+
+Run 7e (`./run.sh --finetune <run 7b>/ckpt --team5`, 3M): from 7b's 8M, phase 3,
+7d's window, speed penalty and floor, plus the launch and the floor penalty. Snapshots
+every 0.5M, each scored with the launch, so the best point can be kept.

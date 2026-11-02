@@ -164,7 +164,7 @@ def _tilt_deg(q) -> float:
 
 
 def rollout(agent, cfg_env, episodes: int, laps: int, seed: int, chunk: int = 64,
-            force_d_g=None, physical: bool = False):
+            force_d_g=None, physical: bool = False, dump: bool = False):
     """Drive the JAX env directly rather than through embodied's driver, so the
     ground-truth `EnvState` stays visible alongside the policy's own beliefs.
 
@@ -179,7 +179,7 @@ def rollout(agent, cfg_env, episodes: int, laps: int, seed: int, chunk: int = 64
     import jax
 
     with jax.transfer_guard("allow"):
-        return _rollout(agent, cfg_env, episodes, laps, seed, chunk, force_d_g, physical)
+        return _rollout(agent, cfg_env, episodes, laps, seed, chunk, force_d_g, physical, dump)
 
 
 # Decode error over the whole flight conflates two different things: how well
@@ -228,13 +228,14 @@ def _hold(mask, frozen, moved):
 
 
 def _rollout(agent, cfg_env, episodes: int, laps: int, seed: int, chunk: int = 64,
-             force_d_g=None, physical: bool = False):
+             force_d_g=None, physical: bool = False, dump: bool = False):
     import jax
     import jax.numpy as jnp
 
     from skydreamer.dynamics import CONTROL_DT
     from skydreamer.env import batched, gates_passed
-    from skydreamer.track import gate_rotation, plane_pose
+    from skydreamer.dynamics import quat_to_euler
+    from skydreamer.track import floor_penalty, gate_rotation, plane_pose
 
     reset_b, step_b = batched(cfg_env)
     n_gates = cfg_env.track.n_gates
@@ -267,11 +268,14 @@ def _rollout(agent, cfg_env, episodes: int, laps: int, seed: int, chunk: int = 6
         crossings = [[] for _ in range(b)]
         end = [None] * b
         margin = np.full(b, np.inf)
+        # track.floor_penalty at its default weight, summed over the flight, whether
+        # or not the run trained with it: where a flight sank toward the floor.
+        floor_pen = np.zeros(b)
         vmax = np.zeros(b)
         amax = np.zeros(b)
         decode_err = {k: [] for k in ("p_w", "v_w")}
         decode_early = {k: [] for k in ("p_w", "v_w")}
-        trace_p, trace_q = [], []
+        trace_p, trace_q, trace_v = [], [], []
         prev_gates = np.zeros(b, int)
         prev_v = np.zeros((b, 3))
         is_first = np.ones(b, bool)
@@ -331,9 +335,14 @@ def _rollout(agent, cfg_env, episodes: int, laps: int, seed: int, chunk: int = 6
                 t_g = np.asarray(st.t_g)
 
             q = np.asarray(st.s.q)
-            if physical:
+            if cfg_env.floor is not None:
+                with jax.transfer_guard("allow"):
+                    fp = np.asarray(floor_penalty(st.s.p, st.s.v, quat_to_euler(st.s.q), *cfg_env.floor))
+                floor_pen += np.where(live, fp, 0.0)
+            if physical or dump:
                 trace_p.append(p.copy())
                 trace_q.append(q.copy())
+                trace_v.append(v.copy())
             for i in np.nonzero(terminated)[0]:
                 end[i] = dict(step=t + 1, alt=float(-p[i, 2]), p=p[i].tolist(), v=v[i].tolist(),
                               tilt_deg=_tilt_deg(q[i]))
@@ -362,7 +371,8 @@ def _rollout(agent, cfg_env, episodes: int, laps: int, seed: int, chunk: int = 6
                 for i in np.nonzero(crossed)[0]:
                     crossings[i].append(dict(gate=int((plane[i] - 1) // 3 % n_gates),
                                              y=float(local[i, 1]), z=float(local[i, 2]),
-                                             speed=float(speed[i]), alt=float(-p[i, 2])))
+                                             speed=float(speed[i]), alt=float(-p[i, 2]),
+                                             vz=float(v[i, 2])))
                     gate_times[i].append((t + 1) * CONTROL_DT)
                     gate_errs[i].append(float(np.hypot(local[i, 1], local[i, 2])))
                     margin[i] = min(margin[i], float(d_g[i] - off[i]))
@@ -409,10 +419,15 @@ def _rollout(agent, cfg_env, episodes: int, laps: int, seed: int, chunk: int = 6
                     crossings=crossings[i],
                     end=end[i],
                     margin=float(margin[i]) if np.isfinite(margin[i]) else None,
+                    floor_pen=float(floor_pen[i]),
                     vmax=float(vmax[i]),
                     amax=float(amax[i]),
                 )
             )
+            if dump:
+                n = int(steps[i])
+                records[-1]["_traj"] = {k: np.stack(tr, 1)[i, :n].astype(np.float32)
+                                        for k, tr in (("p", trace_p), ("v", trace_v), ("q", trace_q))}
         for k, v in decode_err.items():
             if v:
                 decode_all[k].append(np.concatenate(v))
@@ -502,6 +517,12 @@ def summarize(records, decode: dict, n_gates: int, laps: int):
     margins = [r["margin"] for r in records if r["margin"] is not None]
     if margins:
         diag["min_gate_margin_m_all"] = float(np.min(margins))
+    if any(r.get("floor_pen") for r in records):
+        groups = {"finished": [r for r in records if r["success"]],
+                  "hit the ground": [r for r in records if r["cause"] == 2],
+                  "other": [r for r in records if not r["success"] and r["cause"] != 2]}
+        diag["floor_penalty"] = {k: (float(np.mean([r["floor_pen"] for r in v])), len(v))
+                                 for k, v in groups.items() if v}
     out["diagnostics"] = diag
 
     # Success and ground deaths by airframe thrust-to-weight.  The takeoff failure the
@@ -601,6 +622,10 @@ def report(name: str, s: dict, protocol: str = "paper") -> str:
             L.append(f"{'gate error [m]':<20}mean {e['mean']:.3f}   max {e['max']:.3f}")
         if "min_gate_margin_m_all" in d:
             L.append(f"{'gate margin [m]':<20}min {d['min_gate_margin_m_all']:.3f}")
+        if "floor_penalty" in d:
+            L.append(f"{'floor penalty':<20}" + "   ".join(
+                f"{k} {m:.2f} (n={n})" for k, (m, n) in d["floor_penalty"].items())
+                + "   (mean per flight)")
 
     if "decode_error" in s:
         dec = s["decode_error"]
@@ -637,6 +662,11 @@ def main() -> int:
     ap.add_argument("--hw-gate-outer", type=float, default=None)
     ap.add_argument("--hw-cam-offset", type=float, default=None)
     ap.add_argument("--tag", default="", help="suffix for output files")
+    ap.add_argument("--air-start", action="store_true",
+                    help="start mid-air as Table III, not on the floor (track.LAUNCH): "
+                         "the protocol every run before 7e was scored under")
+    ap.add_argument("--dump", action="store_true",
+                    help="also write every flight's ground-truth p, v, q to <stem>_traj.npz")
     args = ap.parse_args()
 
     logdir = args.logdir.expanduser()
@@ -662,6 +692,8 @@ def main() -> int:
     agent, _ = build_agent(logdir, env)
 
     cfg_env, force_d_g = protocol_config(env.cfg, args.protocol)
+    if args.air_start:
+        cfg_env = cfg_env._replace(launch=None, air_start_alt=None)
     hw = dict(HW_FULL) if args.hw else dict(twr=None, gate_outer=None, cam_offset=None, fov=None)
     for k in hw:
         v = getattr(args, f"hw_{k}", None)
@@ -673,7 +705,9 @@ def main() -> int:
     print(f"evaluating {track} [{args.protocol}]: {args.episodes} episodes x {args.laps} laps",
           flush=True)
     records, decode = rollout(agent, cfg_env, args.episodes, args.laps, args.seed,
-                              force_d_g=force_d_g, physical=PROTOCOLS[args.protocol].get("physical", False))
+                              force_d_g=force_d_g, physical=PROTOCOLS[args.protocol].get("physical", False),
+                              dump=args.dump)
+    traj = [r.pop("_traj") for r in records] if args.dump else None
     summary = summarize(records, decode, env.cfg.track.n_gates, args.laps)
     if "physical" in summary:
         import jax
@@ -697,6 +731,9 @@ def main() -> int:
     # Every episode, for working out *why* flights fail (crash state, where each
     # gate was crossed); summaries alone could not answer that for run 7b/7c.
     (logdir / f"{stem}_episodes.json").write_text(json.dumps(records))
+    if traj is not None:
+        np.savez_compressed(logdir / f"{stem}_traj.npz", **{
+            f"{k}_{i}": t[k] for i, t in enumerate(traj) for k in ("p", "v", "q")})
     print(f"\nwrote {out}")
     return 0
 

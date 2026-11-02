@@ -164,6 +164,12 @@ class SkyDreamer:
                     extra["w_speed"] = hw["w_speed"]
             if base in T.FLOOR:
                 extra["floor"] = (hardware.REACH, T.FLOOR[base])
+                if hw and hw.get("floor_penalty"):
+                    extra["w_floor"] = T.W_FLOOR
+            if base in T.LAUNCH:
+                extra["launch"] = T.LAUNCH[base]
+            if base in T.AIR_START:
+                extra["air_start_alt"] = T.AIR_START[base]
             self._cfg = EnvConfig(
                 track=track,
                 max_steps=self._max_steps,

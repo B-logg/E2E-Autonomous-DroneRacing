@@ -31,6 +31,13 @@ invocation resuming from the previous phase's checkpoint in the same logdir.
     stage 4   7   -> 10M   hw_team, the paper's phase-3 fine-tune settings
     (./run.sh --finetune <ckpt> --team)
 
+  --finetune team5 (run 7e, 3M steps; docs/deviations.md)
+    run 7b's 8M agent, phase-3 settings throughout:
+    stage 1   0   -> 3M    hwf_team: as hwr_team, plus the floor penalty
+                           (track.floor_penalty); every evaluation-column flight
+                           launches from the floor 1.8-2.0 m before G1 (track.LAUNCH)
+    (./run.sh --finetune <run 7b ckpt> --team5)
+
   --finetune team4 (run 7d, 2M steps; docs/deviations.md)
     run 7b's 8M agent, phase-3 settings throughout:
     stage 1   0   -> 2M    hwr_team: train window 0.45, run 7b's speed penalty,
@@ -120,6 +127,14 @@ FINETUNE = {
     "team4": [
         (2.0e6, "hwr_team", PHASE_ARGS[3]),
     ],
+    # run 7e: run 7b's 8M agent again -- not 7d's, which got worse as it trained
+    # (37.5% -> 32.0%; it learned to fly lower under the real floor) -- launched
+    # from the floor in front of G1 (track.LAUNCH) and penalized for a sink it
+    # could no longer stop (track.floor_penalty).  3M rather than 2M: taking off
+    # is new to it.  Phase 3 still: run 7d changed behaviour visibly within 1M of it.
+    "team5": [
+        (3.0e6, "hwf_team", PHASE_ARGS[3]),
+    ],
 }
 
 
@@ -136,8 +151,9 @@ def main() -> int:
                     help="fine-tune a finished agent in stages: hw (run 6, our drone), "
                          "team (run 7, our real track), team2 (run 7b, from run 7's 4M "
                          "under the speed limit), team3 (run 7c, from run 7b's 8M "
-                         "at the real window) or team4 (run 7d, as 7c with 7b's speed "
-                         "penalty and the real floor)")
+                         "at the real window), team4 (run 7d, as 7c with 7b's speed "
+                         "penalty and the real floor) or team5 (run 7e, from run 7b's 8M: "
+                         "floor launch and the floor penalty)")
     ap.add_argument("--steps-scale", type=float, default=1.0,
                     help="multiply every phase boundary (testing the phase chain end to end)")
     ap.add_argument("--dry-run", action="store_true")

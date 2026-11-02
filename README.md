@@ -105,6 +105,11 @@
 7c차 3M은 25.5%로 7b차(37.5%, 수정된 평가)보다 나빴습니다(바닥 충돌 2배). 7d차는 7b차 8M에서 7c차의 판정 창 0.45와 7b차의 속도 감점에,
 바닥 충돌을 실제 바닥 기준(프롭 끝이 바닥 0.10 m 이내, `track.FLOOR`)으로 바꿔 2M 스텝 학습합니다: `./run.sh --finetune <7b차 run>/ckpt --team4`.
 
+7d차 2M은 32.0%로 학습할수록 나빠졌습니다(실제 바닥에서 더 낮게 날도록 학습, G3 다음 바닥 충돌 28→56).
+7e차는 다시 7b차 8M에서, 실제 출발(바닥, G1 게이트 면 2.0 m 앞, `track.LAUNCH`)과
+더 이상 멈출 수 없는 하강에 대한 바닥 감점(`track.floor_penalty`, 7d차 궤적으로 보정)을 더해 3M 스텝 학습합니다:
+`./run.sh --finetune <7b차 run>/ckpt --team5`. 평가는 이제 바닥 출발 기준이며, 이전 방식은 `evaluate.py --air-start`.
+
 ### 참고
 - SkyDreamer (https://arxiv.org/abs/2510.14783)
 - MonoRace (https://arxiv.org/abs/2601.15222)
