@@ -165,7 +165,13 @@ class SkyDreamer:
             if base in T.FLOOR:
                 extra["floor"] = (hardware.REACH, T.FLOOR[base])
                 if hw and hw.get("floor_penalty"):
-                    extra["w_floor"] = T.W_FLOOR
+                    extra["w_floor"] = hw.get("w_floor", T.W_FLOOR)
+                if hw and hw.get("alt_margin"):
+                    extra["w_alt"] = T.W_ALT
+            if base in T.ERODE_PX:
+                extra["erode_px"] = T.ERODE_PX[base]
+            if hw and hw.get("swept_gate"):
+                extra["swept_points"] = hardware.footprint()
             if base in T.LAUNCH:
                 extra["launch"] = T.LAUNCH[base]
             if base in T.AIR_START:

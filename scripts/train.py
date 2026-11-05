@@ -31,6 +31,15 @@ invocation resuming from the previous phase's checkpoint in the same logdir.
     stage 4   7   -> 10M   hw_team, the paper's phase-3 fine-tune settings
     (./run.sh --finetune <ckpt> --team)
 
+  --finetune team6 (run 7f, 5M steps; docs/deviations.md)
+    run 7e's 3M agent, phase-3 settings throughout:
+    stage 1   0   -> 5M    hwa_team: as hwf_team, with the real gate plane scored
+                           and tested on the whole airframe (track.swept_offset),
+                           an altitude margin (track.altitude_penalty) and twice
+                           the floor penalty; the mask erosion thins our frame by
+                           0.25 px instead of wiping it (track.ERODE_PX)
+    (./run.sh --finetune <run 7e 3M ckpt> --team6)
+
   --finetune team5 (run 7e, 3M steps; docs/deviations.md)
     run 7b's 8M agent, phase-3 settings throughout:
     stage 1   0   -> 3M    hwf_team: as hwr_team, plus the floor penalty
@@ -135,6 +144,13 @@ FINETUNE = {
     "team5": [
         (3.0e6, "hwf_team", PHASE_ARGS[3]),
     ],
+    # run 7f: run 7e's 3M agent (it takes off; 36.5% over 3 laps once the erosion no
+    # longer wipes our frame), held to the airframe at the real opening and to an
+    # altitude margin above the floor (hardware `hwa_`).  5M: run 7e was still
+    # improving at 3M (one lap 34.5 -> 37.0 -> 48.5% over its last 1M).
+    "team6": [
+        (5.0e6, "hwa_team", PHASE_ARGS[3]),
+    ],
 }
 
 
@@ -152,8 +168,9 @@ def main() -> int:
                          "team (run 7, our real track), team2 (run 7b, from run 7's 4M "
                          "under the speed limit), team3 (run 7c, from run 7b's 8M "
                          "at the real window), team4 (run 7d, as 7c with 7b's speed "
-                         "penalty and the real floor) or team5 (run 7e, from run 7b's 8M: "
-                         "floor launch and the floor penalty)")
+                         "penalty and the real floor), team5 (run 7e, from run 7b's 8M: "
+                         "floor launch and the floor penalty) or team6 (run 7f, from "
+                         "run 7e's 3M: airframe gate test, altitude margin)")
     ap.add_argument("--steps-scale", type=float, default=1.0,
                     help="multiply every phase boundary (testing the phase chain end to end)")
     ap.add_argument("--dry-run", action="store_true")

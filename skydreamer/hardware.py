@@ -11,7 +11,7 @@ from __future__ import annotations
 import numpy as np
 
 from .params import NOMINAL
-from .track import TEAM_INNER, TEAM_OUTER, W_SPEED_STRICT
+from .track import TEAM_INNER, TEAM_OUTER, W_FLOOR_STRONG, W_SPEED_STRICT
 
 # --- gate (given) ----------------------------------------------------------
 GATE_INNER = 1.5      # m, clear opening edge length
@@ -100,6 +100,16 @@ OWN_GATE_D_G = {"team": (0.50, 0.45)}
 # training's evaluation column and in evaluation.  Run 7e adds:
 #   hwf_  `hwr_` plus track.floor_penalty on a sink the drone could no longer stop
 #         above track.FLOOR_BUFFER.
+#
+# Run 7e's 3M scored 48.5% one lap, 11.5% three; with the mask erosion that wiped our
+# thin frames off (track.ERODE_PX, now fixed on the track for every stage) turned
+# off, 65.5% and 36.5%.  What it still lost on three laps: the airframe clipping the
+# real opening although its centre was inside d_g (64 of 200), and the floor between
+# G3 and G4 (54).  Run 7f:
+#   hwa_  `hwf_`, with the real gate plane scored and tested on the whole airframe
+#         against the opening (track.swept_offset, as the physical evaluation),
+#         track.altitude_penalty under 0.45 m, and twice the floor penalty
+#         (track.W_FLOOR_STRONG).  Speed penalty unchanged.
 # `None` for d_g / t_g / twr means the paper's value.
 HW_STAGES = {
     "hw1_": dict(HW_PROFILE, gate_outer=2.4, twr=None, d_g=None, t_g=None),
@@ -109,6 +119,8 @@ HW_STAGES = {
     "hwp_": dict(HW_PROFILE, own_gate_d_g=(0.45, 0.45), w_speed=W_SPEED_STRICT),
     "hwr_": dict(HW_PROFILE, own_gate_d_g=(0.45, 0.45)),
     "hwf_": dict(HW_PROFILE, own_gate_d_g=(0.45, 0.45), floor_penalty=True),
+    "hwa_": dict(HW_PROFILE, own_gate_d_g=(0.45, 0.45), floor_penalty=True,
+                 w_floor=W_FLOOR_STRONG, swept_gate=True, alt_margin=True),
     HW_PREFIX: HW_PROFILE,
 }
 

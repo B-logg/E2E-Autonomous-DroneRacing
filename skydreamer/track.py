@@ -203,6 +203,11 @@ FLOOR_BUFFER = 0.2    # m
 # lap; this one is zero while level, climbing, or high enough to stop.  Run 7d's
 # finishers would pay 1.1 a flight, its floor deaths 9.5 -- a third of a gate.
 W_FLOOR = 5.0 * W_PROG / CONTROL_FREQ
+# Run 7f's: twice that.  At run 7e's 3M (3 laps, erosion off) the floor crashes
+# paid 9.0 a flight and the finishers 2.8 -- the charge does single out the crashes
+# (3.2x), but a crash paid a third of one gate (30).  Doubled, a crash pays ~18 on
+# top of the altitude term and a finisher ~1.9 a lap, under 1% of a lap's reward.
+W_FLOOR_STRONG = 2.0 * W_FLOOR
 
 
 def safe_descent(room: jax.Array, decel: float = FLOOR_DECEL, lag: float = FLOOR_LAG) -> jax.Array:
@@ -241,6 +246,52 @@ def ground_collision(p_w: jax.Array, v_w: jax.Array, euler: jax.Array) -> jax.Ar
         | (jnp.abs(euler[..., 1]) > jnp.pi / 3)
     )
     return low & bad
+
+
+# NOT FROM THE PAPER.  Run 7e's evaluation fails a crossing when any point of the
+# airframe passes the real gate's plane outside its opening (hardware.check_flight),
+# but training scored and ended crossings on the centre of mass alone, inside
+# d_g = 0.45 m: at 3M, 27-42 of each 200 one-lap flights that failed that way were
+# clean by the training's own test, so nothing ever told the agent.  The airframe
+# reaches 0.08-0.19 m (p10-p90) further out than its centre does at a crossing.
+#
+# Training sees one state per step, so each footprint point is carried along the
+# centre's velocity to the plane.  Against check_flight on run 7e's 3M flights
+# (1823 crossings, erosion off, ground truth): error p5..p95 -0.015..+0.009 m,
+# pass/fail the same on 99.8% of crossings.
+def swept_offset(p_w: jax.Array, v_w: jax.Array, R_wb: jax.Array, points: jax.Array,
+                 gate_pos: jax.Array, gate_yaw: jax.Array) -> jax.Array:
+    """Largest gate-frame max(|y|, |z|) of the airframe's `points` (body frame,
+    (M, 3)) where they cross the gate's plane, the drone moving at `v_w`."""
+    R_gw = gate_rotation(gate_yaw)
+    loc = (p_w + points @ R_wb.T - gate_pos) @ R_gw.T          # (M, 3) gate frame
+    v_g = R_gw @ v_w
+    vx = jnp.maximum(v_g[0], 0.5)       # through the plane, never parallel to it
+    yz = loc[:, 1:] - loc[:, :1] * (v_g[1:] / vx)
+    return jnp.max(jnp.abs(yz))
+
+
+# NOT FROM THE PAPER.  Between G3 and G4 run 7e flies low as a habit, not only
+# when it crashes: at 3M (3 laps, erosion off) half the legs that survived took
+# the lowest prop tip under 0.45 m and 16% under 0.25 m, where the ones that hit
+# the floor went (p50 0.48 m at G3, then down).  The world model's position is off
+# by 0.20-0.25 m, so a flight that low has no margin it can see.  floor_penalty
+# charges a sink and nothing else; level flight at 0.2 m is free.
+#
+# So: `W_ALT` per metre of the lowest prop tip under `ALT_MARGIN`, per step, once
+# the flight has been above it (a launch climbs through it for free).  0.45 m keeps
+# the centre within G1/G3/G4's window (centre 0.75, CoM window +-0.45) and starts
+# the charge 0.31 s (p50; p10 0.17 s) before a floor crash -- 28 steps, beyond the
+# actor's 16-step imagination.  0.1 m under costs 0.3 a step, what progress pays
+# at 5.4 m/s; run 7e's 3-lap finishers flew 9.0 m-steps under (27 a flight, ~9 a
+# lap, against ~250 a lap of reward), its floor crashes 11.2.
+ALT_MARGIN = 0.45   # m, lowest prop tip
+W_ALT = 3.0         # per metre under, per step
+
+
+def altitude_penalty(lowest: jax.Array, margin: float = ALT_MARGIN, w: float = W_ALT) -> jax.Array:
+    """`w` per metre the lowest point is under `margin`, per step; 0 above it."""
+    return w * jnp.maximum(margin - lowest, 0.0)
 
 
 # --------------------------------------------------------------------------
@@ -484,6 +535,17 @@ AIR_START = {"team": 0.6}
 # A launched drone that comes back down slower than this settles on the floor
 # again; faster is a crash -- section II-C's v_z > 1 m/s.
 TOUCHDOWN_SPEED = 1.0
+# How thin the 50%-of-the-time mask erosion makes our frame, in pixels of the
+# 64 x 64 image per side, on tracks whose frame is not the paper's (not in the
+# paper).  Section II-F erodes 1 pixel at 64 x 64 because real masks came out
+# thinner, on a frame 0.6 m wide (1.5 m opening, 2.7 m outer).  Ours is 0.15 m:
+# 1-2 px beyond 2 m, and a 1-pixel erosion's 3x3 test removes anything under 3 px,
+# so every gate further than ~1.25 m vanished -- a frame 2 m before G2 went from
+# 110 pixels to 4.  Run 7e's 3M, scored with that erosion off: 45.0 -> 65.5% one lap,
+# 6.0 -> 36.5% three laps (physical, 200 flights).  The same *fraction* of the frame
+# as the paper's 1 pixel of 0.6 m is 0.25 px of 0.15 m, applied in the renderer
+# (render.render_mask's `shrink_px`), where a quarter pixel can be resolved.
+ERODE_PX = {"team": 0.25}
 
 
 def team_track() -> Track:

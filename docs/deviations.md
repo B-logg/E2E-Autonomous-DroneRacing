@@ -623,3 +623,87 @@ floor death 9.5 -- a third of a gate -- starting 26 steps before the impact.
 Run 7e (`./run.sh --finetune <run 7b>/ckpt --team5`, 3M): from 7b's 8M, phase 3,
 7d's window, speed penalty and floor, plus the launch and the floor penalty. Snapshots
 every 0.5M, each scored with the launch, so the best point can be kept.
+
+### Run 7e's result, and run 7f: a mask our gate survives, the airframe at the gate, a floor margin
+
+Run 7e, `physical` on `team`, launched from the floor, 200 episodes:
+
+| snapshot | 0.5M | 1.0M | 1.5M | 2.0M | 2.5M | 3.0M |
+|---|---|---|---|---|---|---|
+| 1 lap | 33.5% | 22.5% | 23.5% | 34.5% | 37.0% | 48.5% |
+| 3 laps | 5.5% | 2.0% | 0.0% | 6.5% | 5.5% | 11.5% |
+| on the floor before G1 | 51 | 43 | 35 | 29 | 21 | 10 |
+
+It learned to take off (7d's 2M: 8.0% from the floor) and was still improving at 3M.
+
+**The mask erosion wiped our gate.** Section II-F erodes the 64 x 64 mask by 1 pixel
+half of the time (3x3 average pooling, thresholded) because real masks came out
+thinner -- on the paper's 0.6 m frame. Ours is 0.15 m: 1.9 px at 2 m, 0.9 px at 4 m,
+and the 3x3 test removes anything under 3 px, so with erosion on, every gate further
+than ~1.25 m was gone (a frame 2 m before G2: 110 pixels -> 4). Run 7e's 3M re-scored
+(`evaluate.py --erosion`, same seeds, T4):
+
+| | erosion as trained (0.5) | erosion off |
+|---|---|---|
+| 1 lap | 45.0% | **65.5%** |
+| 3 laps | 6.0% | **36.5%** |
+| world model position error (whole flight) | 0.248 m | 0.202 m |
+
+(The 3-lap 6.0% against the A5000's 11.5% at the same seeds is evaluation noise between
+machines, ~2 standard errors at n = 200.) `track.ERODE_PX` now thins our frame in the
+renderer by 0.25 px per edge -- the same fraction of a 0.15 m frame as the paper's
+1 pixel of 0.6 m -- with the paper's probability and hold. Over random poses in front
+of G1 it keeps 84 / 67 / 38 / 19% of the frame at 1 / 2 / 4 / 6 m (the expected
+(w - 0.5) / w of a w-pixel frame), where the 1-pixel erosion kept 43 / 1 / 0 / 0%.
+It applies to every stage on our track, evaluation included.
+
+**What 7e still loses, with erosion off** (3 laps, 200 flights, 127 failures): the floor
+between G3 and G4, 54; the airframe past the real opening, 64 (G2 22, G4 20, G3 17,
+G1 5); the rest, 9.
+
+*The floor.* Low flight there is a habit, not an accident: half of the G3 -> G4 legs
+that survived took the lowest prop tip under 0.45 m and 16% under 0.25 m. The crashes
+crossed G3 lower (prop tip p50 0.48 m against 0.66 m) and sinking faster (1.53 against
+0.41 m/s); speed did not separate them (6.6 against 6.95 m/s). `floor_penalty` charges
+only a sink, so level flight 0.2 m up was free while the world model was 0.2 m off.
+`track.altitude_penalty` (hardware `hwa_`): `W_ALT` = 3 per metre of the lowest prop tip
+under 0.45 m, per step, once the flight has been above it (a launch climbs through it
+for free). On 7e's 3M flights:
+
+| margin | 3-lap finishers charged | m-steps under, finishers / floor crashes | charge starts before a crash (p50 / p10) |
+|---|---|---|---|
+| 0.35 m | 77% | 2.65 / 5.28 | 0.23 / 0.12 s |
+| 0.40 m | 89% | 5.12 / 7.91 | 0.27 / 0.14 s |
+| **0.45 m** | 90% | **8.96 / 11.24** | **0.31 / 0.17 s** |
+| 0.50 m | 100% | 14.78 / 15.34 | 0.33 / 0.19 s |
+
+It is meant to charge the finishers too -- they fly where the crashes do -- and at
+0.45 m it costs 7e's finishers ~9 a lap against ~250 a lap of reward (the 2000-step
+training episodes peak at 1149), while starting 28 steps before a crash, beyond the
+actor's 16-step imagination. 0.45 m keeps the centre inside G1/G3/G4's window. The
+floor penalty is doubled (`W_FLOOR_STRONG`): it already singled out the crashes
+(9.0 against 2.8 a flight) but a crash paid a third of one gate.
+
+*The airframe.* Training scored and ended the real plane's crossing on the centre of
+mass against d_g = 0.45; the evaluation fails a crossing when any point of the
+airframe passes outside the 0.6 m opening, and the airframe reaches 0.08-0.19 m
+(p10-p90) beyond its centre. `track.swept_offset` carries each footprint point
+(`hardware.footprint`) along the centre's velocity to the plane; against
+`check_flight` on 1823 of 7e's crossings its error is -0.015..+0.009 m (p5..p95) and
+pass/fail agrees on 99.8%. Under `hwa_` the real plane pays `1 - w / 0.6` and is a
+strike past 0.6; the virtual pre/post planes keep d_g. Of the 83 crossings that failed
+the airframe test, the old training test let 18 through; the other 65 were already
+strikes in training, which says the rest of the precision gap is the centre's spread
+(CoM offset p90 0.46 m), i.e. how well the agent knows where it is, not the reward.
+The real-plane reward falls from a mean 0.54 to 0.41 per crossing (correlation 0.93).
+
+The speed penalty is unchanged: it does work against the reward's preference for
+arriving sooner (the discount), but speed did not separate failures from finishers
+(G2 5.43 against 5.25 m/s, G3 6.6 against 6.95), and run 7c's 5x penalty on |v|
+doubled the floor deaths by penalizing the split-S's fall. If speed still matters after
+7f, the penalty should be on horizontal speed only.
+
+Run 7f (`./run.sh --finetune <run 7e 3M>/ckpt --team6`, 5M): from 7e's 3M, phase 3,
+hardware `hwa_`. If it removed the 18 missed airframe strikes and half the floor
+crashes, 7e's 127 failures would be ~82, 59% over 3 laps: 80% needs the centre's
+spread at the gates to shrink as well.

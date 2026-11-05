@@ -19,6 +19,7 @@ from skydreamer.dynamics import (
     derivative,
     motor_setpoint,
     quat_to_euler,
+    quat_to_matrix,
     step,
 )
 from skydreamer.env import EnvConfig, batched, gates_passed, reset
@@ -1008,6 +1009,9 @@ def test_finetune_schedule_names_real_tasks():
     assert train.FINETUNE["team4"][0][2] == train.PHASE_ARGS[3]
     assert [(s, t) for s, t, _ in train.FINETUNE["team5"]] == [(3e6, "hwf_team")]
     assert train.FINETUNE["team5"][0][2] == train.PHASE_ARGS[3]
+    # run 7f: run 7e's 3M agent, airframe gate test and altitude margin, 5M
+    assert [(s, t) for s, t, _ in train.FINETUNE["team6"]] == [(5e6, "hwa_team")]
+    assert train.FINETUNE["team6"][0][2] == train.PHASE_ARGS[3]
 
 
 def test_forward_camera_moves_the_viewpoint():
@@ -1368,6 +1372,146 @@ def test_floor_penalty_charges_a_sink_it_could_not_stop_and_nothing_else():
             _, _, r_on, *_ = env_step(sink, u, cfg)
             _, _, r_off, *_ = env_step(sink, u, cfg._replace(w_floor=0.0))
         assert float(r_off) - float(r_on) > 0.1
+    finally:
+        hardware.apply_dynamics(None)
+
+
+def _g2_view():
+    """Camera 2 m before G2, level, at its height: the frame there is ~2 px wide."""
+    q = euler_to_quat(jnp.float32(0.0), jnp.float32(-10 * np.pi / 180), jnp.float32(15 * np.pi / 180))
+    c_e = jnp.array([0.0, 50 * np.pi / 180, 0.0])
+    return jnp.array([2.0, -0.5, -2.25]), q, c_e
+
+
+def test_run_7f_erosion_thins_our_frame_instead_of_wiping_it():
+    tr = T.team_track()
+    p, q, c_e = _g2_view()
+    with jax.transfer_guard("allow"):
+        full = float(render_mask(p, q, c_e, tr).sum())
+        thin = float(render_mask(p, q, c_e, tr, shrink_px=T.ERODE_PX["team"]).sum())
+        wiped = float(augment.erode1(render_mask(p, q, c_e, tr)).sum())
+    # the paper's 1-pixel erosion leaves almost nothing of a 0.15 m frame at 2 m;
+    # a quarter pixel -- the same fraction of the frame -- thins it and keeps it
+    assert full > 80 and wiped < 0.1 * full
+    assert 0.5 * full < thin < full
+    # our track's every stage, the evaluation one too, thins; the paper's erodes
+    from skydreamer.embodied_env import SkyDreamer
+    from skydreamer.env import _render_augmented
+    for task in ("hw_team", "hwf_team", "hwa_team"):
+        assert _team_cfg(task).erode_px == T.ERODE_PX["team"], task
+    assert SkyDreamer("inverted_loop", max_steps=50, seed=1).cfg.erode_px is None
+    # and the env applies it when the episode's erosion is on
+    cfg = _team_cfg("hw_team")
+    with jax.transfer_guard("allow"):
+        st, _ = reset(jax.random.key(0), cfg)
+        st = st._replace(s=st.s._replace(p=p, q=q, omega_b=jnp.zeros(3)), c_e=c_e,
+                         rs_s=jnp.float32(0.0))
+        on = float(_render_augmented(st._replace(erode=jnp.array(True)), cfg).sum())
+        off = float(_render_augmented(st._replace(erode=jnp.array(False)), cfg).sum())
+    assert off > 50 and 0.5 * off < on < off
+
+
+def test_swept_offset_matches_the_physical_evaluation():
+    from skydreamer import hardware
+    tr = T.team_track()
+    pts = hardware.footprint()
+    rng = np.random.default_rng(0)
+    for _ in range(40):
+        g = int(rng.integers(4))
+        yaw = float(tr.yaw[g])
+        R_gw = np.asarray(T.gate_rotation(jnp.float32(yaw)))
+        off = rng.uniform(-0.45, 0.45, 2)
+        speed = rng.uniform(3.0, 8.0)
+        v_g = np.array([speed, *rng.uniform(-1.5, 1.5, 2)])
+        att = rng.uniform(-0.7, 0.7, 2)
+        q = np.asarray(euler_to_quat(jnp.float32(att[0]), jnp.float32(att[1]), jnp.float32(yaw)))
+        steps = np.arange(-30, 30)
+        loc = np.array([0.0, *off]) + np.outer(steps / 90 + 0.004, v_g)
+        pos = np.asarray(tr.pos[g]) + loc @ R_gw
+        _, ev = hardware.check_flight(pos, np.tile(q, (len(steps), 1)), [(np.asarray(tr.pos[g]), yaw, True)],
+                                      len(steps), 1 / 90)
+        k = ev[0][0] + 1        # the first step past the plane, what env.step sees
+        with jax.transfer_guard("allow"):
+            w = float(T.swept_offset(jnp.asarray(pos[k]), jnp.asarray(v_g @ R_gw), quat_to_matrix(jnp.asarray(q)),
+                                     jnp.asarray(pts, jnp.float32), tr.pos[g], tr.yaw[g]))
+        assert abs(w - ev[0][3]) < 0.01
+
+
+def _at_g1(cfg, y, dyaw, speed=5.0):
+    """A mid-air state 2 cm before G1's real plane, `y` m right of centre, heading
+    `dyaw` rad off the gate's normal (still flying along it)."""
+    yaw = cfg.track.yaw[0]
+    R_gw = T.gate_rotation(yaw)
+    st, _ = reset(jax.random.key(0), cfg._replace(train_fraction=1.0))
+    p = cfg.track.pos[0] + R_gw.T @ jnp.array([-0.02, y, 0.0])
+    s = st.s._replace(p=p, v=R_gw.T @ jnp.array([speed, 0.0, 0.0]), q=euler_to_quat(0.0, 0.0, yaw + dyaw),
+                      omega_b=jnp.zeros(3))
+    return st._replace(s=s, plane=jnp.array(1, jnp.int32), plane0=jnp.array(0, jnp.int32),
+                       armed=jnp.array(True), grounded=jnp.array(False), airborne=jnp.array(True))
+
+
+def test_run_7f_tests_the_real_gate_on_the_airframe():
+    from skydreamer import hardware
+    new, old = _team_cfg("hwa_team"), _team_cfg("hwf_team")
+    assert new.swept_points is not None and old.swept_points is None
+    assert _team_cfg("hw_team").swept_points is None     # evaluation scores it itself
+    hardware.apply_dynamics(hardware.TWR_CENTRAL)
+    u = jnp.full(4, 0.5)
+    try:
+        with jax.transfer_guard("allow"):
+            # centre 0.44 m out, turned 30 deg to the gate: inside d_g (0.45), but a
+            # prop tip crosses past the 0.6 m opening
+            for cfg, struck in ((new, True), (old, False)):
+                st, _, r, term, _ = env_step(_at_g1(cfg, 0.44, 0.5), u, cfg)
+                assert bool(term) == struck and (int(st.term_cause) == 1) == struck
+            # through the middle, level: passes, and pays for the airframe's offset
+            st, _, r, term, _ = env_step(_at_g1(new, 0.0, 0.0), u, new)
+            assert not bool(term) and int(st.plane) == 2
+            w = float(T.swept_offset(st.s.p, st.s.v, quat_to_matrix(st.s.q),
+                                     jnp.asarray(new.swept_points, jnp.float32),
+                                     new.track.pos[0], new.track.yaw[0]))
+            assert 0.1 < w < 0.3
+            assert float(r) > T.W_GATE * (1 - w / 0.6) - 1.0
+    finally:
+        hardware.apply_dynamics(None)
+
+
+def test_run_7f_charges_low_flight_once_it_has_been_above_the_margin():
+    assert float(T.altitude_penalty(jnp.float32(0.6))) == 0.0
+    assert float(T.altitude_penalty(jnp.float32(0.35))) == pytest.approx(0.1 * T.W_ALT, rel=1e-4)
+    cfg = _team_cfg("hwa_team")
+    assert cfg.w_alt == T.W_ALT and cfg.w_floor == T.W_FLOOR_STRONG == 2 * T.W_FLOOR
+    assert _team_cfg("hwf_team").w_alt == 0.0 and _team_cfg("hw_team").w_alt == 0.0
+    from skydreamer import hardware
+    assert hardware.full_hw("hwa_team") == "hw_team"
+    hardware.apply_dynamics(hardware.TWR_CENTRAL)
+    u = jnp.full(4, 0.45)
+    try:
+        with jax.transfer_guard("allow"):
+            st, _ = reset(jax.random.key(0), cfg._replace(train_fraction=1.0))
+            level = euler_to_quat(0.0, 0.0, cfg.track.yaw[0])
+
+            def at(alt, ok):
+                s = st.s._replace(p=st.s.p.at[2].set(-alt), v=jnp.zeros(3), q=level, omega_b=jnp.zeros(3))
+                return st._replace(s=s, alt_ok=jnp.array(ok))
+
+            def charge(alt, ok):
+                n, _, r_on, *_ = env_step(at(alt, ok), u, cfg)
+                _, _, r_off, *_ = env_step(at(alt, ok), u, cfg._replace(w_alt=0.0))
+                return float(r_off) - float(r_on), bool(n.alt_ok)
+
+            # 0.30 m up, having been above 0.45: charged ~(0.45 - 0.30) W_ALT
+            c, _ = charge(0.30, True)
+            assert c == pytest.approx(0.15 * T.W_ALT, abs=0.02)
+            # the same height on the way up from the floor, never above yet: free
+            c, ok = charge(0.30, False)
+            assert c == 0.0 and not ok
+            # above the margin: free, and from now on it counts
+            c, ok = charge(0.60, False)
+            assert c == 0.0 and ok
+            # a launch starts below it and is not yet armed
+            st_l, _ = reset(jax.random.key(0), cfg._replace(train_fraction=0.0))
+            assert not bool(st_l.alt_ok) and bool(st_l.grounded)
     finally:
         hardware.apply_dynamics(None)
 

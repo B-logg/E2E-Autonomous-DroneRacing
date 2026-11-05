@@ -110,6 +110,11 @@
 더 이상 멈출 수 없는 하강에 대한 바닥 감점(`track.floor_penalty`, 7d차 궤적으로 보정)을 더해 3M 스텝 학습합니다:
 `./run.sh --finetune <7b차 run>/ckpt --team5`. 평가는 이제 바닥 출발 기준이며, 이전 방식은 `evaluate.py --air-start`.
 
+7e차 3M은 바닥 출발 1랩 48.5%, 3랩 11.5%였습니다. 마스크 erosion(1픽셀)이 우리 게이트의 얇은 틀(0.15 m)을 1.25 m 밖에서 전부 지우고 있었고,
+erosion을 끄면 같은 체크포인트가 1랩 65.5%, 3랩 36.5%입니다. 이제 erosion은 틀을 0.25픽셀만 얇게 합니다(`track.ERODE_PX`, 논문과 같은 비율).
+7f차는 7e차 3M에서, 실제 게이트 면 판정을 기체 외곽 전체 기준으로(`track.swept_offset`, 평가와 동일), 프롭 끝이 0.45 m 아래로 내려가면
+감점(`track.altitude_penalty`), 바닥 감점 2배로 5M 스텝 학습합니다: `./run.sh --finetune <7e차 3M>/ckpt --team6`.
+
 ### 참고
 - SkyDreamer (https://arxiv.org/abs/2510.14783)
 - MonoRace (https://arxiv.org/abs/2601.15222)

@@ -80,11 +80,18 @@ def render_mask(
     track: Track,
     h: int = 64,
     w: int = 64,
+    shrink_px: jax.Array | float = 0.0,
 ) -> jax.Array:
     """(H, W) float32 mask in {0, 1}: 1 where a gate frame is visible.
 
     Depth-correct: when gates overlap in image space the nearest one wins, and
-    a nearer gate's *hole* correctly shows whatever is behind it."""
+    a nearer gate's *hole* correctly shows whatever is behind it.
+
+    `shrink_px` thins every frame edge by that many pixels (at the gate's depth,
+    as if seen face-on): the mask erosion of section II-F at a fraction of a
+    pixel, which a 3x3 pooling of the finished mask cannot express
+    (track.ERODE_PX).  Seen obliquely the edges thin a little less in the image
+    than that, never more."""
     d_world = jnp.einsum("ij,hwj->hwi", camera_rotation(q, c_e), pixel_rays(h, w))
 
     yaw = track.yaw
@@ -98,7 +105,11 @@ def render_mask(
     local = jnp.einsum("nij,hwnj->hwni", gate_rotation(yaw), hit - track.pos)
 
     off = jnp.maximum(jnp.abs(local[..., 1]), jnp.abs(local[..., 2]))
-    on_frame = (off <= track.outer / 2) & (off >= track.inner / 2)
+    # `t` is depth along the camera axis (the rays' forward component is 1), so
+    # one pixel there spans t / f metres face-on.
+    fx = FOCAL_RATIO * w
+    thin = shrink_px * jnp.maximum(t, 0.0) / fx
+    on_frame = (off <= track.outer / 2 - thin) & (off >= track.inner / 2 + thin)
     valid = on_frame & (t > 1e-3) & (jnp.abs(denom) >= 1e-8) & track.visible
 
     # Nearest hit wins; if nothing is hit the pixel is background.

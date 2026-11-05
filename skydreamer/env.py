@@ -17,6 +17,7 @@ from typing import NamedTuple
 
 import jax
 import jax.numpy as jnp
+import numpy as np
 
 from . import augment, track as trk
 from .dynamics import (
@@ -139,6 +140,20 @@ class EnvConfig(NamedTuple):
     # Chance that the 1-pixel erosion (augment.erode1) is on, drawn at reset and
     # re-drawn every ~EROSION_HOLD_STEPS.  Paper II-F: 0.5.
     erosion_prob: float = augment.EROSION_PROB
+    # How the erosion thins the mask: None = section II-F's 1-pixel erosion of the
+    # finished 64 x 64 mask (augment.erode1); a number = every frame edge that many
+    # pixels thinner, in the renderer (track.ERODE_PX: our 0.15 m frame).
+    erode_px: float | None = None
+    # Body-frame points covering the airframe, (M, 3) (hardware.footprint): if set,
+    # the real gate plane (the middle one) is scored and its collision tested on the
+    # furthest of them against the opening (track.swept_offset), as the physical
+    # evaluation does, rather than on the centre of mass against d_g.  The virtual
+    # pre/post planes keep d_g.  None = the paper.
+    swept_points: np.ndarray | None = None
+    # track.altitude_penalty: the margin in m for the lowest prop tip, and the weight
+    # (0 = off).  Needs `floor` (for the reach).
+    alt_margin: float = trk.ALT_MARGIN
+    w_alt: float = 0.0
 
 
 class EnvState(NamedTuple):
@@ -185,6 +200,10 @@ class EnvState(NamedTuple):
     # on, not `floor`'s crash clearance.  False / True for a mid-air start.
     grounded: jax.Array
     airborne: jax.Array
+    # Whether the lowest prop tip has been above `EnvConfig.alt_margin` this
+    # episode; track.altitude_penalty only charges once it has, so a launch climbs
+    # through the margin for free.
+    alt_ok: jax.Array
 
 
 def _mix(a: float, b: float, use_train: jax.Array) -> jax.Array:
@@ -324,6 +343,7 @@ def reset(key: jax.Array, cfg: EnvConfig) -> tuple[EnvState, dict]:
         term_cause=jnp.array(0, jnp.int32),
         grounded=launch,
         airborne=~launch,
+        alt_ok=jnp.array(False),
     )
     # Prime the image buffer so the first observations are consistent rather
     # than blank; the real drone likewise has valid frames before it launches.
@@ -336,10 +356,12 @@ def _render_augmented(state: EnvState, cfg: EnvConfig) -> jax.Array:
     p_cam = state.s.p
     if cfg.cam_offset:
         p_cam = p_cam + quat_to_matrix(state.s.q)[..., :, 0] * cfg.cam_offset
+    shrink = 0.0 if cfg.erode_px is None else jnp.where(state.erode, cfg.erode_px, 0.0)
     mask = render_mask(
-        p_cam, state.s.q, state.c_e, cfg.track, cfg.image_size, cfg.image_size
+        p_cam, state.s.q, state.c_e, cfg.track, cfg.image_size, cfg.image_size, shrink
     )
-    out = augment.apply(mask, state.s.omega_b, state.c_e, state.rs_s, state.erode)
+    erode = state.erode if cfg.erode_px is None else jnp.array(False)
+    out = augment.apply(mask, state.s.omega_b, state.c_e, state.rs_s, erode)
     if cfg.fov is not None:
         out = out * fov_valid(cfg.image_size, cfg.image_size, cfg.fov)
     return out
@@ -472,13 +494,25 @@ def step(state: EnvState, action: jax.Array, cfg: EnvConfig):
 
     # --- plane crossing, reward, termination
     target, _, _ = trk.plane_pose(cfg.track, state.plane, state.t_g)
-    yaw = cfg.track.yaw[(state.plane // trk.PLANES_PER_GATE) % cfg.track.n_gates]
+    gate = (state.plane // trk.PLANES_PER_GATE) % cfg.track.n_gates
+    yaw = cfg.track.yaw[gate]
     p_plane = trk.gate_rotation(yaw) @ (s_next.p - target)
 
     armed = state.armed | (p_plane[0] < 0.0)
     passed = armed & (p_plane[0] > 0.0)
-    r_gate = jnp.where(passed, trk.gate_reward(p_plane, state.d_g), 0.0)
-    hit_gate = passed & trk.gate_collision(p_plane, state.d_g)
+    r_cross = trk.gate_reward(p_plane, state.d_g)
+    struck = trk.gate_collision(p_plane, state.d_g)
+    if cfg.swept_points is not None:
+        # The real plane: the airframe against the opening, as hardware.check_flight.
+        half = cfg.track.inner[gate] / 2
+        worst = trk.swept_offset(s_next.p, s_next.v, quat_to_matrix(s_next.q),
+                                 jnp.asarray(cfg.swept_points, jnp.float32),
+                                 cfg.track.pos[gate], yaw)
+        real = (state.plane % trk.PLANES_PER_GATE) == 1
+        r_cross = jnp.where(real, 1.0 - worst / half, r_cross)
+        struck = jnp.where(real, worst > half, struck)
+    r_gate = jnp.where(passed, r_cross, 0.0)
+    hit_gate = passed & struck
 
     dist_now = jnp.linalg.norm(s_next.p - target)
     # II-C: progress is only shaped toward the *pre*-gate; it is zeroed once the
@@ -492,6 +526,12 @@ def step(state: EnvState, action: jax.Array, cfg: EnvConfig):
         r_rate = r_rate + trk.speed_penalty(s_next.v, cfg.v_cap, cfg.w_speed)
     if cfg.w_floor:
         r_rate = r_rate + trk.floor_penalty(s_next.p, s_next.v, euler, *cfg.floor, cfg.w_floor)
+    alt_ok = state.alt_ok
+    if cfg.w_alt:
+        lowest = trk.lowest_point(s_next.p, euler, cfg.floor[0])
+        alt_ok = alt_ok | (lowest >= cfg.alt_margin)
+        r_rate = r_rate + jnp.where(
+            alt_ok, trk.altitude_penalty(lowest, cfg.alt_margin, cfg.w_alt), 0.0)
     reward = trk.W_PROG * r_prog - r_rate + trk.W_GATE * r_gate
 
     if cfg.floor is not None:
@@ -545,6 +585,7 @@ def step(state: EnvState, action: jax.Array, cfg: EnvConfig):
         term_cause=term_cause,
         grounded=grounded,
         airborne=airborne,
+        alt_ok=alt_ok,
     )
 
     # --- image delay: the policy sees a frame IMAGE_DELAY_STEPS old
