@@ -76,9 +76,9 @@ def apply(
     return jnp.where(erode, erode1(out), out)
 
 
-def resample_erosion(key: jax.Array, current: jax.Array) -> jax.Array:
+def resample_erosion(key: jax.Array, current: jax.Array, prob: float = EROSION_PROB) -> jax.Array:
     """Hold the erosion level for ~EROSION_HOLD_STEPS, then re-draw it."""
     k_hold, k_draw = jax.random.split(key)
     change = jax.random.uniform(k_hold) < (1.0 / EROSION_HOLD_STEPS)
-    fresh = jax.random.uniform(k_draw) < EROSION_PROB
+    fresh = jax.random.uniform(k_draw) < prob
     return jnp.where(change, fresh, current)

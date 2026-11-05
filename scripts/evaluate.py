@@ -667,6 +667,9 @@ def main() -> int:
                          "the protocol every run before 7e was scored under")
     ap.add_argument("--dump", action="store_true",
                     help="also write every flight's ground-truth p, v, q to <stem>_traj.npz")
+    ap.add_argument("--erosion", type=float, default=None,
+                    help="chance the 1-pixel mask erosion is on (default: the env's, 0.5); "
+                         "0 shows every frame as rendered")
     args = ap.parse_args()
 
     logdir = args.logdir.expanduser()
@@ -694,6 +697,8 @@ def main() -> int:
     cfg_env, force_d_g = protocol_config(env.cfg, args.protocol)
     if args.air_start:
         cfg_env = cfg_env._replace(launch=None, air_start_alt=None)
+    if args.erosion is not None:
+        cfg_env = cfg_env._replace(erosion_prob=float(args.erosion))
     hw = dict(HW_FULL) if args.hw else dict(twr=None, gate_outer=None, cam_offset=None, fov=None)
     for k in hw:
         v = getattr(args, f"hw_{k}", None)

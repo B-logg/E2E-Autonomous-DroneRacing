@@ -136,6 +136,9 @@ class EnvConfig(NamedTuple):
     air_start_alt: float | None = None
     # track.floor_penalty's weight; 0 = off.  Needs `floor`.
     w_floor: float = 0.0
+    # Chance that the 1-pixel erosion (augment.erode1) is on, drawn at reset and
+    # re-drawn every ~EROSION_HOLD_STEPS.  Paper II-F: 0.5.
+    erosion_prob: float = augment.EROSION_PROB
 
 
 class EnvState(NamedTuple):
@@ -298,7 +301,7 @@ def reset(key: jax.Array, cfg: EnvConfig) -> tuple[EnvState, dict]:
         rs_s=jax.random.uniform(
             k[8], minval=augment.ROLLING_SHUTTER_RANGE[0], maxval=augment.ROLLING_SHUTTER_RANGE[1]
         ),
-        erode=jax.random.uniform(k[9]) < augment.EROSION_PROB,
+        erode=jax.random.uniform(k[9]) < cfg.erosion_prob,
         gyro_sigma=jax.random.uniform(
             k[10], minval=cfg.gyro_noise_range[0], maxval=cfg.gyro_noise_range[1]
         ),
@@ -529,7 +532,7 @@ def step(state: EnvState, action: jax.Array, cfg: EnvConfig):
         s=s_next,
         eps_a=eps_a,
         eps_M_slow=eps_M_slow,
-        erode=augment.resample_erosion(k[7], state.erode),
+        erode=augment.resample_erosion(k[7], state.erode, cfg.erosion_prob),
         w_max_offset=w_max_offset,
         plane=plane,
         armed=armed,
