@@ -1052,6 +1052,9 @@ def test_finetune_schedule_names_real_tasks():
     assert train.FINETUNE["team6"][0][2] == train.PHASE_ARGS[3]
     assert [(s, t) for s, t, _ in train.FINETUNE["team7"]] == [(3e6, "hwm_team")]
     assert train.FINETUNE["team7"][0][2] == train.PHASE_ARGS[3]
+    # run 7h: run 7f's 3M agent again, no leaning before it is off the floor, 2M
+    assert [(s, t) for s, t, _ in train.FINETUNE["team8"]] == [(2e6, "hwl_team")]
+    assert train.FINETUNE["team8"][0][2] == train.PHASE_ARGS[3]
 
 
 def test_forward_camera_moves_the_viewpoint():
@@ -1649,3 +1652,56 @@ def test_milestone_snapshots_copy_each_million_once(tmp_path):
     assert ms.poll(run, out, 1_000_000, 1) == 2 and len(list(out.glob("step_*"))) == 2
     # a resumed run picks up where the copies are
     assert ms.done_milestones(out, 1_000_000) == 2
+
+
+def test_run_7h_charges_leaning_before_the_airframe_is_clear_of_the_floor():
+    """hwl_ = hwa_ plus track.launch_tip_penalty: the lowest prop tip under 2 cm
+    before the airframe is clear of the floor, and nothing once it is."""
+    assert float(T.launch_tip_penalty(jnp.float32(0.05))) == 0.0
+    assert float(T.launch_tip_penalty(jnp.float32(0.0))) == pytest.approx(
+        T.W_LAUNCH_TIP * T.LAUNCH_TIP_BUFFER, rel=1e-4)
+    new, old = _team_cfg("hwl_team"), _team_cfg("hwa_team")
+    assert new.w_launch_tip == T.W_LAUNCH_TIP and old.w_launch_tip == 0.0
+    assert _team_cfg("hw_team").w_launch_tip == 0.0      # evaluation: no shaping
+    # everything 7f had is kept, and 7g's gate margin is not
+    assert new.swept_points is not None and new.w_alt == old.w_alt and new.w_floor == old.w_floor
+    assert new.w_gate_margin == 0.0 and new.launch == old.launch
+    from skydreamer import hardware
+    assert hardware.full_hw("hwl_team") == "hw_team"
+    hardware.apply_dynamics(hardware.TWR_CENTRAL)
+    u = jnp.full(4, 0.6)
+    try:
+        with jax.transfer_guard("allow"):
+            st0 = jax.tree.map(lambda a: a[0], _launched(new, n=4))
+            assert bool(st0.grounded) and not bool(st0.airborne)
+            reach = new.floor[0]
+
+            def lifted(alt, roll_deg, airborne):
+                s = st0.s._replace(
+                    p=st0.s.p.at[2].set(-alt), v=jnp.zeros(3), omega_b=jnp.zeros(3),
+                    q=euler_to_quat(jnp.radians(roll_deg), 0.0, quat_to_euler(st0.s.q)[2]))
+                return st0._replace(s=s, grounded=jnp.array(False), airborne=jnp.array(airborne))
+
+            # 11 cm up, rolled 30 deg, below hover thrust: the tip under 2 cm --
+            # charged, not crashed
+            st = lifted(0.11, 30.0, False)
+            st_n, _, r_n, term_n, _ = env_step(st, jnp.full(4, 0.3), new)
+            st_o, _, r_o, term_o, _ = env_step(st, jnp.full(4, 0.3), old)
+            assert not bool(term_n) and not bool(term_o) and not bool(st_n.airborne)
+            tip = float(T.lowest_point(st_n.s.p, quat_to_euler(st_n.s.q), reach))
+            assert 0.0 < tip < T.LAUNCH_TIP_BUFFER
+            want = float(T.launch_tip_penalty(jnp.float32(tip)))
+            assert want > 1.0
+            assert float(r_o) - float(r_n) == pytest.approx(want, abs=1e-3)
+            # in the air (airborne, at G1): the same reward as 7f's
+            st = _at_g1(new, 0.1, 0.0)
+            _, _, r_n, _, _ = env_step(st, u, new)
+            _, _, r_o, _, _ = env_step(st, u, old)
+            assert float(r_n) == pytest.approx(float(r_o), abs=1e-5)
+            # level at the same height: the tip is 12 cm up, nothing to pay
+            st = lifted(0.12, 0.0, False)
+            _, _, r_n, _, _ = env_step(st, u, new)
+            _, _, r_o, _, _ = env_step(st, u, old)
+            assert float(r_n) == pytest.approx(float(r_o), abs=1e-5)
+    finally:
+        hardware.apply_dynamics(None)

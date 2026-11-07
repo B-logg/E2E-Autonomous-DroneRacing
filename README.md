@@ -123,6 +123,10 @@ erosion을 끄면 같은 체크포인트가 1랩 65.5%, 3랩 36.5%입니다. 이
 체크포인트 비교는 이제 `./run_compare.sh 이름=<스냅샷> 이름=<스냅샷>`으로 합니다. 같은 비행 400개(seed 20000)로 1·3랩을 평가하고,
 비행별로 짝지어 비교하며(`scripts/compare_evals.py`), 이륙 추락과 비행 중 바닥 추락의 원인을 궤적으로 진단합니다(`scripts/diagnose_failures.py`).
 
+400비행 비교에서 7f차 3M(3랩 46.2%)과 7g차 1.5M(42.2%)은 통계적으로 구분되지 않았습니다(짝지은 차이 +4.0%p, p=0.25).
+7h차는 7f차 3M 스냅샷에서, 기체가 바닥을 벗어나기 전 프롭 끝이 2 cm 아래로 내려가면 감점(`track.launch_tip_penalty`)을 더해 2M 스텝 학습합니다:
+`./run.sh --finetune <7f차 3M 스냅샷>/ckpt --team8`. 이륙 추락(4~6%)은 추력이 약한 기체가 낮은 고도에서 기울면서 생겼습니다.
+
 ### 참고
 - SkyDreamer (https://arxiv.org/abs/2510.14783)
 - MonoRace (https://arxiv.org/abs/2601.15222)

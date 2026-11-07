@@ -158,6 +158,10 @@ class EnvConfig(NamedTuple):
     # (0 = off).  Needs `swept_points`.
     gate_margin: float = trk.GATE_MARGIN
     w_gate_margin: float = 0.0
+    # track.launch_tip_penalty: the lowest prop tip under `launch_tip` m before the
+    # airframe is clear of the floor (0 = off).  Needs `launch` and `floor`.
+    launch_tip: float = trk.LAUNCH_TIP_BUFFER
+    w_launch_tip: float = 0.0
 
 
 class EnvState(NamedTuple):
@@ -539,6 +543,10 @@ def step(state: EnvState, action: jax.Array, cfg: EnvConfig):
         alt_ok = alt_ok | (lowest >= cfg.alt_margin)
         r_rate = r_rate + jnp.where(
             alt_ok, trk.altitude_penalty(lowest, cfg.alt_margin, cfg.w_alt), 0.0)
+    if cfg.w_launch_tip and cfg.launch is not None:
+        tip = trk.lowest_point(s_next.p, euler, cfg.floor[0])
+        r_rate = r_rate + jnp.where(
+            airborne, 0.0, trk.launch_tip_penalty(tip, cfg.launch_tip, cfg.w_launch_tip))
     reward = trk.W_PROG * r_prog - r_rate + trk.W_GATE * r_gate
 
     if cfg.floor is not None:

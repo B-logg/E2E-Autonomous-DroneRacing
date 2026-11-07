@@ -802,3 +802,51 @@ failures that every 7x run has had:
   sinking), next to the finishers' lowest point on the same leg.
 
 Those call for different fixes, so the next run waits for that report.
+
+### The 400-flight comparison, and run 7h: no leaning before the airframe is off the floor
+
+`./run_compare.sh` on 7f's 3M and 7g's 1.5M (400 new flights each, seed 20 000,
+identical flights for both; physical protocol, floor launch):
+
+| | 1 lap | 3 laps (95% CI) | swept/x (3 laps) | first: swept | floor in flight | takeoff |
+|---|---|---|---|---|---|---|
+| 7f 3M | 76.8% | 46.2% (41-51) | 4.4% | 35.5% | 11.7% | 4.2% |
+| 7g 1.5M | 75.5% | 42.2% (38-47) | 6.0% | 42.2% | 7.2% | 5.8% |
+
+Paired, 7f minus 7g is +1.2 points at one lap (95% CI -3.8 to +6.3, McNemar p
+0.70) and +4.0 at three (-2.3 to +10.3, p 0.25): no ranking at the flight level,
+and the airframe failures per crossing are higher under 7g (244 of 4035 against
+178 of 4061). The gate margin is dropped; run 7h starts from 7f's 3M.
+
+What the trajectories say about each failure (7f's 3M, 3 laps):
+
+- **The airframe at the opening (35.5%).** At the real plane the centre is 0.52 m
+  out on failing crossings, 0.20 m on the others, and the rate climbs with how
+  obliquely it crosses (1.5% under 10 deg, 10.5% at 30-45, 26% beyond 45). At G1,
+  G2 and G4 the decoded centre was at least as far out as the true one: the agent
+  knew. At G4, 44 of its 57 failures are the top edge, on flights that came down
+  the G3 -> G4 leg high (the rate is 1.6% when that leg's lowest tip is under
+  0.3 m, 9.9% when it is over 0.6 m). Only G3, out of the split-S under G2,
+  is an estimate: the decoded centre 0.24 m less far out than the true one.
+- **The floor in flight (11.7%; G3 -> G4 5.5, G4 -> G1 5.0).** At the point of no
+  return 30 of 47 are `estimate`: the agent decoded itself 0.17-0.24 m (p50)
+  higher than it was, where finishers at their lowest point decode +0.01. A 0.15 m
+  higher line would have saved ~80% of them, but raising the altitude margin to
+  0.60 m charges finishers 33 a lap at today's lines (0.45 m: 8.6) and pushes
+  the G3 -> G4 leg up into G4's top edge, which is already failing more the
+  higher that leg is flown. Not changed in 7h.
+- **Takeoff (4.2%).** Every crash's tip goes under the floor while leaning
+  about as far as the takeoffs that clear (25 vs 27 deg), but on low-thrust
+  airframes (TWR 2.8 vs 4.0; k_w rank-biserial -0.53) with a higher command and
+  more motor spread. 14 of 400 flights crash under both checkpoints. Takeoffs that
+  clear keep the tip above 2 cm in 93% of flights.
+
+Run 7h (`hwl_`, `./run.sh --finetune <run 7f 3M snapshot>/ckpt --team8`, 2M,
+snapshots every 0.5M): 7f's settings plus `track.launch_tip_penalty`, 600 per metre
+of the lowest tip under 2 cm per step until the airframe is clear of the floor:
+~31, one gate, for the dip that precedes a typical crash; nothing for a straight
+climb. One change, so 7h's snapshots can be read against 7f's 3M on the same 400
+flights (`./run_compare.sh 7f3M=... 7h0.5M=...`; results already in `compare/`
+are not scored again). If it works, the takeoff share falls toward zero: ~3 points at one lap and
+~2 at three (a saved takeoff still has to fly the laps); it does not touch the airframe at the opening or
+the floor in flight, which are 47 of the 54 points still missing at 3 laps.

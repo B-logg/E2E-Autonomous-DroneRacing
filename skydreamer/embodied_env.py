@@ -176,6 +176,8 @@ class SkyDreamer:
                     extra["w_gate_margin"] = T.W_GATE_MARGIN
             if base in T.LAUNCH:
                 extra["launch"] = T.LAUNCH[base]
+                if hw and hw.get("launch_tip"):
+                    extra["w_launch_tip"] = T.W_LAUNCH_TIP
             if base in T.AIR_START:
                 extra["air_start_alt"] = T.AIR_START[base]
             self._cfg = EnvConfig(

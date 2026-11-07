@@ -294,6 +294,32 @@ def altitude_penalty(lowest: jax.Array, margin: float = ALT_MARGIN, w: float = W
     return w * jnp.maximum(margin - lowest, 0.0)
 
 
+# NOT FROM THE PAPER.  Runs 7f and 7g lost 4-6% of their flights before they left
+# the floor (run_compare.sh, 400 flights each, seed 20000): a prop tip touches once
+# the airframe leans past asin(alt / reach), 22 deg at 7 cm.  The crashes lean no
+# further than the takeoffs that clear (25 vs 27 deg, p50) -- they lean *while low*:
+# they are the low-thrust airframes (TWR 2.8 against 4.0, p50; k_w the strongest
+# separator, rank-biserial -0.53), which climb slower on the same lean schedule.
+# 14 of the 400 flights crash under both checkpoints: the draw decides it, and the
+# policy cannot tell the draw before it is off the floor.  altitude_penalty does
+# not reach this: it charges only after the flight has been above its margin.
+#
+# So: `W_LAUNCH_TIP` per metre of the lowest prop tip under `LAUNCH_TIP_BUFFER`,
+# per step, until the airframe is clear of the floor (env._floor_contact's
+# `airborne`).  Standing on the floor the tip is at 0.05 m and costs nothing; a
+# straight climb costs nothing.  At 2 cm, 7% of 7f's clean takeoffs pay anything,
+# every crash pays: its tip spends 0.051 m-steps under (p50; p90 0.090), which at
+# 600 costs ~31 -- one gate -- in the 3-5 steps before the touch.
+LAUNCH_TIP_BUFFER = 0.02   # m, lowest prop tip, before the airframe is clear
+W_LAUNCH_TIP = 600.0       # per metre under, per step
+
+
+def launch_tip_penalty(lowest: jax.Array, buffer: float = LAUNCH_TIP_BUFFER,
+                       w: float = W_LAUNCH_TIP) -> jax.Array:
+    """`w` per metre the lowest point is under `buffer`, per step; 0 above it."""
+    return w * jnp.maximum(buffer - lowest, 0.0)
+
+
 # NOT FROM THE PAPER.  Run 7f fixed the floor with a cost that starts before the
 # failure (altitude_penalty: ground deaths 30% -> 14% over 3 laps) but not the
 # gate, where it only moved the reward's zero and the collision to the airframe:

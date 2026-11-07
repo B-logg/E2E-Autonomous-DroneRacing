@@ -31,6 +31,13 @@ invocation resuming from the previous phase's checkpoint in the same logdir.
     stage 4   7   -> 10M   hw_team, the paper's phase-3 fine-tune settings
     (./run.sh --finetune <ckpt> --team)
 
+  --finetune team8 (run 7h, 2M steps; docs/deviations.md)
+    run 7f's 3M agent, phase-3 settings throughout:
+    stage 1   0   -> 2M    hwl_team: as hwa_team, plus a cost on the lowest prop
+                           tip under 2 cm before the airframe is clear of the
+                           floor (track.launch_tip_penalty)
+    (./run.sh --finetune <run 7f 3M ckpt> --team8)
+
   --finetune team7 (run 7g, 3M steps; docs/deviations.md)
     run 7f's 3M agent, phase-3 settings throughout:
     stage 1   0   -> 3M    hwm_team: as hwa_team, plus a gate margin: the
@@ -164,6 +171,13 @@ FINETUNE = {
     "team7": [
         (3.0e6, "hwm_team", PHASE_ARGS[3]),
     ],
+    # run 7h: run 7f's 3M agent again (7g's best matched it, 46.2 vs 42.2% over 3
+    # laps at n=400, paired p=0.25), with a cost on leaning before the airframe is
+    # off the floor (hardware `hwl_`).  2M, snapshots every 0.5M: 7f peaked at 3M
+    # of fine-tuning and 7g at or before 1.5M, so pick the best with run_compare.sh.
+    "team8": [
+        (2.0e6, "hwl_team", PHASE_ARGS[3]),
+    ],
 }
 
 
@@ -183,8 +197,9 @@ def main() -> int:
                          "at the real window), team4 (run 7d, as 7c with 7b's speed "
                          "penalty and the real floor), team5 (run 7e, from run 7b's 8M: "
                          "floor launch and the floor penalty) team6 (run 7f, from "
-                         "run 7e's 3M: airframe gate test, altitude margin) or team7 "
-                         "(run 7g, from run 7f's 3M: gate margin on the airframe)")
+                         "run 7e's 3M: airframe gate test, altitude margin), team7 "
+                         "(run 7g, from run 7f's 3M: gate margin on the airframe) or "
+                         "team8 (run 7h, from run 7f's 3M: no leaning before clear of the floor)")
     ap.add_argument("--steps-scale", type=float, default=1.0,
                     help="multiply every phase boundary (testing the phase chain end to end)")
     ap.add_argument("--dry-run", action="store_true")
