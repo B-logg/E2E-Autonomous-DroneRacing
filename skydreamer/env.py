@@ -154,6 +154,10 @@ class EnvConfig(NamedTuple):
     # (0 = off).  Needs `floor` (for the reach).
     alt_margin: float = trk.ALT_MARGIN
     w_alt: float = 0.0
+    # track.gate_margin_penalty at the real plane, on the airframe's worst point
+    # (0 = off).  Needs `swept_points`.
+    gate_margin: float = trk.GATE_MARGIN
+    w_gate_margin: float = 0.0
 
 
 class EnvState(NamedTuple):
@@ -509,7 +513,10 @@ def step(state: EnvState, action: jax.Array, cfg: EnvConfig):
                                  jnp.asarray(cfg.swept_points, jnp.float32),
                                  cfg.track.pos[gate], yaw)
         real = (state.plane % trk.PLANES_PER_GATE) == 1
-        r_cross = jnp.where(real, 1.0 - worst / half, r_cross)
+        r_real = 1.0 - worst / half
+        if cfg.w_gate_margin:
+            r_real = r_real - trk.gate_margin_penalty(worst, cfg.gate_margin, cfg.w_gate_margin) / trk.W_GATE
+        r_cross = jnp.where(real, r_real, r_cross)
         struck = jnp.where(real, worst > half, struck)
     r_gate = jnp.where(passed, r_cross, 0.0)
     hit_gate = passed & struck

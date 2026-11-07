@@ -461,7 +461,7 @@ def _rollout(agent, cfg_env, episodes: int, laps: int, seed: int, chunk: int = 6
     return records, decode
 
 
-def summarize(records, decode: dict, n_gates: int, laps: int):
+def summarize(records, decode: dict, n_gates: int, laps: int, virtual=()):
     """Two layers.
 
     The paper-comparison layer keeps the paper's definitions exactly: Table IV
@@ -563,7 +563,9 @@ def summarize(records, decode: dict, n_gates: int, laps: int):
         fails = [r for r in records if r["phys_fail"]]
         # An episode can fail the swept check *and* the sim; attribute by what came first.
         only_phys = [r for r in fails if r["sim_success"]]
-        real = [e for r in records for e in r["phys_events"] if e[0] != 1]
+        # Real (rendered) gates only.  This used to drop gate index 1, the inverted
+        # loop's invisible gate -- and so dropped G2, the worst gate, on `team`.
+        real = [e for r in records for e in r["phys_events"] if e[0] not in set(virtual)]
         out["physical"] = {
             "sim_finished_rate": float(np.mean([r["sim_success"] for r in records])),
             "failed_swept_check": len(fails),
@@ -766,7 +768,9 @@ def main() -> int:
                               force_d_g=force_d_g, physical=PROTOCOLS[args.protocol].get("physical", False),
                               dump=args.dump)
     traj = [r.pop("_traj") for r in records] if args.dump else None
-    summary = summarize(records, decode, env.cfg.track.n_gates, args.laps)
+    vis = np.asarray(env.cfg.track.visible)
+    summary = summarize(records, decode, env.cfg.track.n_gates, args.laps,
+                        virtual=[int(g) for g in np.nonzero(~vis)[0]])
     if "physical" in summary:
         import jax
 

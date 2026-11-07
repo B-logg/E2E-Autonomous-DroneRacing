@@ -726,6 +726,15 @@ def test_gate_estimate_separates_the_chosen_line_from_an_estimation_error():
     assert ge[1]["err_mean"] == pytest.approx([-0.15, 0.0])
     assert "at the gate: true vs decoded CoM" in ev.report("team", s, "physical")
 
+    # The worst-point percentiles cover every real gate.  They used to drop
+    # gate index 1 (the inverted loop's invisible gate), i.e. G2 on `team`.
+    ph = [dict(rec(chosen), sim_success=True, phys_fail=None,
+               phys_events=[(0, 0.1, 0.2), (1, 0.5, 0.9)])]
+    assert ev.summarize(ph, {}, n_gates=2, laps=1)["physical"][
+        "real_gate_worst_point_offset_m"][99] > 0.85
+    assert ev.summarize(ph, {}, n_gates=2, laps=1, virtual=[1])["physical"][
+        "real_gate_worst_point_offset_m"][99] == pytest.approx(0.2)
+
     # Records from a run without the decoder (or an older dump) add nothing.
     old = [dict(gate=0, y=0.1, z=0.0), dict(gate=1, y=0.1, z=0.0)]
     assert "gate_estimate" not in ev.summarize([rec(old)], {}, n_gates=2, laps=1)
@@ -1041,6 +1050,8 @@ def test_finetune_schedule_names_real_tasks():
     # run 7f: run 7e's 3M agent, airframe gate test and altitude margin, 5M
     assert [(s, t) for s, t, _ in train.FINETUNE["team6"]] == [(5e6, "hwa_team")]
     assert train.FINETUNE["team6"][0][2] == train.PHASE_ARGS[3]
+    assert [(s, t) for s, t, _ in train.FINETUNE["team7"]] == [(3e6, "hwm_team")]
+    assert train.FINETUNE["team7"][0][2] == train.PHASE_ARGS[3]
 
 
 def test_forward_camera_moves_the_viewpoint():
@@ -1501,6 +1512,36 @@ def test_run_7f_tests_the_real_gate_on_the_airframe():
                                      new.track.pos[0], new.track.yaw[0]))
             assert 0.1 < w < 0.3
             assert float(r) > T.W_GATE * (1 - w / 0.6) - 1.0
+    finally:
+        hardware.apply_dynamics(None)
+
+
+def test_run_7g_charges_the_airframe_beyond_the_gate_margin():
+    """hwm_ = hwa_ plus track.gate_margin_penalty at the real plane: free inside
+    0.45 m, one gate's worth (-30) at the 0.6 m opening, and nowhere else."""
+    assert float(T.gate_margin_penalty(jnp.float32(0.40))) == 0.0
+    assert float(T.gate_margin_penalty(jnp.float32(0.60))) == pytest.approx(T.W_GATE, rel=1e-4)
+    new, old = _team_cfg("hwm_team"), _team_cfg("hwa_team")
+    assert new.w_gate_margin == T.W_GATE_MARGIN and old.w_gate_margin == 0.0
+    assert _team_cfg("hw_team").w_gate_margin == 0.0
+    # everything 7f had is kept
+    assert new.swept_points is not None and new.w_alt == old.w_alt and new.w_floor == old.w_floor
+    from skydreamer import hardware
+    assert hardware.full_hw("hwm_team") == "hw_team"
+    hardware.apply_dynamics(hardware.TWR_CENTRAL)
+    u = jnp.full(4, 0.5)
+    try:
+        with jax.transfer_guard("allow"):
+            for y, dyaw in ((0.0, 0.0), (0.30, 0.0), (0.36, 0.3)):
+                st_n, _, r_n, term_n, _ = env_step(_at_g1(new, y, dyaw), u, new)
+                st_o, _, r_o, term_o, _ = env_step(_at_g1(old, y, dyaw), u, old)
+                assert not bool(term_n) and not bool(term_o) and int(st_n.plane) == 2
+                w = float(T.swept_offset(st_n.s.p, st_n.s.v, quat_to_matrix(st_n.s.q),
+                                         jnp.asarray(new.swept_points, jnp.float32),
+                                         new.track.pos[0], new.track.yaw[0]))
+                want = float(T.gate_margin_penalty(jnp.float32(w)))
+                assert float(r_o) - float(r_n) == pytest.approx(want, abs=1e-3), (y, w)
+            assert want > 5.0, "the last case must sit beyond the margin"
     finally:
         hardware.apply_dynamics(None)
 

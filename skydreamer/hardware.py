@@ -110,6 +110,10 @@ OWN_GATE_D_G = {"team": (0.50, 0.45)}
 #         against the opening (track.swept_offset, as the physical evaluation),
 #         track.altitude_penalty under 0.45 m, and twice the floor penalty
 #         (track.W_FLOOR_STRONG).  Speed penalty unchanged.
+# Run 7f's 3M scored 82.0% one lap, 42.0% three (4M: 70.5%, 38.5%): the floor was
+# fixed, the airframe at the opening was not (G2 worst).  Run 7g:
+#   hwm_  `hwa_` plus track.gate_margin_penalty: the airframe's worst point charged
+#         beyond 0.45 m at the real plane.  Everything else unchanged.
 # `None` for d_g / t_g / twr means the paper's value.
 HW_STAGES = {
     "hw1_": dict(HW_PROFILE, gate_outer=2.4, twr=None, d_g=None, t_g=None),
@@ -121,6 +125,8 @@ HW_STAGES = {
     "hwf_": dict(HW_PROFILE, own_gate_d_g=(0.45, 0.45), floor_penalty=True),
     "hwa_": dict(HW_PROFILE, own_gate_d_g=(0.45, 0.45), floor_penalty=True,
                  w_floor=W_FLOOR_STRONG, swept_gate=True, alt_margin=True),
+    "hwm_": dict(HW_PROFILE, own_gate_d_g=(0.45, 0.45), floor_penalty=True,
+                 w_floor=W_FLOOR_STRONG, swept_gate=True, alt_margin=True, gate_margin=True),
     HW_PREFIX: HW_PROFILE,
 }
 

@@ -61,6 +61,11 @@
 #       Run 7b's 8M `ckpt` again: 7c's window, 7b's speed penalty, and the crash
 #       test at the real floor (track.FLOOR), phase-3 settings, no demonstrations
 #       (scripts/train.py, 2M steps).  Scored and resumed as run 7.
+#   ./run.sh --finetune <ckpt> --team7   ~13 h   run 7g
+#       Run 7f's 3M snapshot `ckpt`: 7f's settings plus a gate margin -- the
+#       airframe's worst point charged beyond 0.45 m at the real plane
+#       (track.gate_margin_penalty) (scripts/train.py, 3M steps).  Scored and
+#       resumed as run 7.
 #   ./run.sh --finetune <ckpt> --team6   ~22 h   run 7f
 #       Run 7e's 3M `ckpt`: 7e's settings, with the real gate plane scored and
 #       tested on the whole airframe against the opening (track.swept_offset), an
@@ -138,6 +143,7 @@ for arg in "$@"; do
     --team4)      TEAM=4 ;;
     --team5)      TEAM=5 ;;
     --team6)      TEAM=6 ;;
+    --team7)      TEAM=7 ;;
     --demos)      NEXT="demos" ;;
     --resume)     MODE="resume" ;;
     --setup-only) MODE="setup" ;;
@@ -168,6 +174,7 @@ if [ -n "${FT_CKPT}" ]; then
   if [ "${TEAM}" = "4" ]; then FT_SCHED="team4"; HW_TAG="-team4"; fi
   if [ "${TEAM}" = "5" ]; then FT_SCHED="team5"; HW_TAG="-team5"; fi
   if [ "${TEAM}" = "6" ]; then FT_SCHED="team6"; HW_TAG="-team6"; fi
+  if [ "${TEAM}" = "7" ]; then FT_SCHED="team7"; HW_TAG="-team7"; fi
 fi
 SNAP_EVERY="${SKYDREAMER_SNAPSHOT_EVERY:-1e6}"
 
@@ -193,7 +200,10 @@ fi
 if [ "${TEAM}" = "6" ] && [ "${FT}" = "0" ]; then
   die "--team6 is a fine-tuning schedule: ./run.sh --finetune <run 7e 3M ckpt> --team6"
 fi
-if { [ "${TEAM}" = "3" ] || [ "${TEAM}" = "4" ] || [ "${TEAM}" = "5" ] || [ "${TEAM}" = "6" ]; } && [ -n "${DEMOS}" ]; then
+if [ "${TEAM}" = "7" ] && [ "${FT}" = "0" ]; then
+  die "--team7 is a fine-tuning schedule: ./run.sh --finetune <run 7f 3M ckpt> --team7"
+fi
+if { [ "${TEAM}" = "3" ] || [ "${TEAM}" = "4" ] || [ "${TEAM}" = "5" ] || [ "${TEAM}" = "6" ] || [ "${TEAM}" = "7" ]; } && [ -n "${DEMOS}" ]; then
   die "--team${TEAM} trains without demonstrations (run 7b's agent flies the track itself,
      and run 7b, which held them in its buffer, ran out of RAM); drop --demos"
 fi
@@ -592,7 +602,9 @@ else
   log "Training -> ${RUN_DIR}"
   if [ "${FT}" = "1" ]; then
     [ -z "${WARM_CKPT}" ] || die "--finetune loads the whole agent; drop --warm-start"
-    if [ "${FT_SCHED}" = "team6" ]; then
+    if [ "${FT_SCHED}" = "team7" ]; then
+      echo "Fine-tuning ${FT_CKPT} on our real track: 7f's settings plus the gate margin on the airframe (scripts/train.py)."
+    elif [ "${FT_SCHED}" = "team6" ]; then
       echo "Fine-tuning ${FT_CKPT} on our real track: airframe gate test, altitude margin, stronger floor penalty (scripts/train.py)."
     elif [ "${FT_SCHED}" = "team5" ]; then
       echo "Fine-tuning ${FT_CKPT} on our real track, launched from the floor, with the floor penalty (scripts/train.py)."
@@ -709,7 +721,7 @@ trap 'kill ${PRUNER} ${SNAPPER} 2>/dev/null || true' EXIT
     2>&1 | tee -a "${RUN_DIR}/train.log"
 
 log "Evaluating in simulation"
-if [ "${FT_SCHED}" = "team" ] || [ "${FT_SCHED}" = "team2" ] || [ "${FT_SCHED}" = "team3" ] || [ "${FT_SCHED}" = "team4" ] || [ "${FT_SCHED}" = "team5" ] || [ "${FT_SCHED}" = "team6" ]; then
+if [ "${FT_SCHED}" = "team" ] || [ "${FT_SCHED}" = "team2" ] || [ "${FT_SCHED}" = "team3" ] || [ "${FT_SCHED}" = "team4" ] || [ "${FT_SCHED}" = "team5" ] || [ "${FT_SCHED}" = "team6" ] || [ "${FT_SCHED}" = "team7" ]; then
   # Our real track: 4 gates a lap, so 5 laps is 20 crossings at a 0.6 m half-opening.
   # Score the flights that matter first -- 1 lap and 3 -- against the real gate.
   for L in 1 3; do

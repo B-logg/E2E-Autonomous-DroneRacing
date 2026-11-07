@@ -115,6 +115,10 @@ erosion을 끄면 같은 체크포인트가 1랩 65.5%, 3랩 36.5%입니다. 이
 7f차는 7e차 3M에서, 실제 게이트 면 판정을 기체 외곽 전체 기준으로(`track.swept_offset`, 평가와 동일), 프롭 끝이 0.45 m 아래로 내려가면
 감점(`track.altitude_penalty`), 바닥 감점 2배로 5M 스텝 학습합니다: `./run.sh --finetune <7e차 3M>/ckpt --team6`.
 
+7f차 3M은 1랩 82.0%, 3랩 42.0%(4M: 70.5%, 38.5%)였습니다. 고도 여유 항으로 바닥 추락은 30%→14%로 줄었지만, 기체 외곽 걸림은 그대로였고 G2는 학습할수록 나빠졌습니다.
+7g차는 7f차 3M 스냅샷에서, 실제 게이트 면에서 기체 외곽 최대 오프셋이 0.45 m를 넘으면 1 m당 200 감점(`track.gate_margin_penalty`)을 더해 3M 스텝 학습합니다:
+`./run.sh --finetune <7f차 3M 스냅샷>/ckpt --team7`.
+
 ### 참고
 - SkyDreamer (https://arxiv.org/abs/2510.14783)
 - MonoRace (https://arxiv.org/abs/2601.15222)

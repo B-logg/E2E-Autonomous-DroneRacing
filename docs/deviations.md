@@ -707,3 +707,48 @@ Run 7f (`./run.sh --finetune <run 7e 3M>/ckpt --team6`, 5M): from 7e's 3M, phase
 hardware `hwa_`. If it removed the 18 missed airframe strikes and half the floor
 crashes, 7e's 127 failures would be ~82, 59% over 3 laps: 80% needs the centre's
 spread at the gates to shrink as well.
+
+### Run 7f's result, and run 7g: a margin at the gate
+
+Physical protocol, floor launch, our track. 7e is its 3M with the erosion off; 7f is
+evaluated with the 0.25 px thinning on (a slightly harder mask). First failure per
+flight; "per crossing" is the airframe's worst point past the 0.6 m opening.
+
+| | 7e 3M (n=200) | 7f 3M (n=100) | 7f 4M (n=200) |
+|---|---|---|---|
+| 1 lap | 65.5% | **82.0%** | 70.5% |
+| 3 laps | 36.5% | **42.0%** | 38.5% |
+| 3 laps, ground first | 30% | 14% | 14% |
+| 3 laps, airframe first | 32% | 42% | 46% |
+| per crossing past 0.6 (3 laps) | 4.6% | 5.2% | 6.8% |
+| G2 per crossing (1 lap) | 8.2% | 6.3% | 13.8% |
+| lap 1 median | 4.41 s | 5.04 s | 4.73 s |
+
+The altitude margin worked (ground first 30% -> 14%, z ~3.0; on the way to G4 27% ->
+6%) and held at 4M. The airframe test changed nothing per crossing, and G2 got worse
+from 3M to 4M while the lap got faster again (G1->G2 1.62 -> 1.50 s; G2 lateral sd
+0.19 -> 0.24 m). The one-lap drop 82.0 -> 70.5% is z ~2.2.
+
+New in `evaluate.py`: the decoded and true centre in the gate frame at every
+crossing. At 4M, G2 (3 laps, 509 crossings): true y +0.126, decoded +0.082 (corr
+0.81-0.91 per lap); true z +0.015, decoded +0.104. Decode-minus-truth sd 0.12 / 0.13
+against a true spread of 0.23 / 0.24: estimation is ~a quarter of the variance. Most
+of the lateral offset is the line the policy chooses while knowing it; the vertical
+bias (~0.09 m) is estimation, which a reward cannot fix.
+
+Run 7f put a cost before the floor and the floor stopped killing it; at the gate it
+only moved the reward's zero and the strike to the airframe, the same terminal
+signal the floor had in 7e. Run 7g puts the same shape at the gate (hardware
+`hwm_`, `track.gate_margin_penalty`): 200 per metre of the airframe's worst point
+past 0.45 m at the real plane, so a crossing at the opening costs -30 more (one
+gate). On 7f's 3M flights 22% of crossings pass 0.45 m, by 0.023 m on average: ~18
+a lap, against the altitude term's ~9 and ~250 of reward. Everything else is 7f's.
+
+Run 7g (`./run.sh --finetune <run 7f 3M snapshot>/ckpt --team7`, 3M, snapshots every
+0.5M): from 7f's 3M, phase 3. 7f peaked at 3M of fine-tuning, so the best snapshot
+is picked by evaluation. If G2 came down to G1's rate (~3% per crossing), 3 laps
+would be ~50%; 80% needs ~1.5% per crossing at every gate and the vertical estimate.
+
+Evaluation fixes: the `worst point offset` percentiles skipped gate index 1 (the
+inverted loop's invisible gate, i.e. G2 on `team`); they now skip invisible gates.
+`run_test.sh` no longer stops on the per-flight `*_episodes.json` dumps.

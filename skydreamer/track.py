@@ -294,6 +294,31 @@ def altitude_penalty(lowest: jax.Array, margin: float = ALT_MARGIN, w: float = W
     return w * jnp.maximum(margin - lowest, 0.0)
 
 
+# NOT FROM THE PAPER.  Run 7f fixed the floor with a cost that starts before the
+# failure (altitude_penalty: ground deaths 30% -> 14% over 3 laps) but not the
+# gate, where it only moved the reward's zero and the collision to the airframe:
+# per real-gate crossing the airframe still clipped the opening 5.2% (3M) and 6.8%
+# (4M) of the time against run 7e's 4.6%, G2 6.3% -> 13.8% (1 lap) as the lap got
+# faster (5.04 -> 4.73 s).  At G2 the world model decodes +0.08 m of the true
+# +0.13 m lateral offset (corr 0.86): the policy sees the line it takes.
+#
+# So the same shape at the gate: `W_GATE_MARGIN` per metre of the airframe's worst
+# point beyond `GATE_MARGIN`, once, at the real plane.  200 makes a crossing at
+# the 0.6 m opening cost -30 against the 0 it paid, one gate's worth.  On 7f's 3M
+# flights 22% of crossings pass 0.45 m, by 0.023 m each on average: ~18 a lap
+# against ~250 a lap of reward (the altitude term: ~9).  0.45 m is the airframe's
+# worst point; its centre is ~0.15 m inside it (p50), so the charge starts with
+# the centre ~0.30 m out.
+GATE_MARGIN = 0.45      # m, airframe worst point at the real plane
+W_GATE_MARGIN = 200.0   # reward per metre beyond, per crossing
+
+
+def gate_margin_penalty(worst: jax.Array, margin: float = GATE_MARGIN,
+                        w: float = W_GATE_MARGIN) -> jax.Array:
+    """`w` per metre the airframe's worst point is beyond `margin`; 0 inside it."""
+    return w * jnp.maximum(worst - margin, 0.0)
+
+
 # --------------------------------------------------------------------------
 # Flight plan vector (section II-H)
 # --------------------------------------------------------------------------

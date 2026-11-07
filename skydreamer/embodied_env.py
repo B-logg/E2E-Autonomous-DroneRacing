@@ -172,6 +172,8 @@ class SkyDreamer:
                 extra["erode_px"] = T.ERODE_PX[base]
             if hw and hw.get("swept_gate"):
                 extra["swept_points"] = hardware.footprint()
+                if hw.get("gate_margin"):
+                    extra["w_gate_margin"] = T.W_GATE_MARGIN
             if base in T.LAUNCH:
                 extra["launch"] = T.LAUNCH[base]
             if base in T.AIR_START:

@@ -31,6 +31,13 @@ invocation resuming from the previous phase's checkpoint in the same logdir.
     stage 4   7   -> 10M   hw_team, the paper's phase-3 fine-tune settings
     (./run.sh --finetune <ckpt> --team)
 
+  --finetune team7 (run 7g, 3M steps; docs/deviations.md)
+    run 7f's 3M agent, phase-3 settings throughout:
+    stage 1   0   -> 3M    hwm_team: as hwa_team, plus a gate margin: the
+                           airframe's worst point at the real plane charged
+                           beyond 0.45 m (track.gate_margin_penalty)
+    (./run.sh --finetune <run 7f 3M ckpt> --team7)
+
   --finetune team6 (run 7f, 5M steps; docs/deviations.md)
     run 7e's 3M agent, phase-3 settings throughout:
     stage 1   0   -> 5M    hwa_team: as hwf_team, with the real gate plane scored
@@ -151,6 +158,12 @@ FINETUNE = {
     "team6": [
         (5.0e6, "hwa_team", PHASE_ARGS[3]),
     ],
+    # run 7g: run 7f's 3M agent (82.0% one lap, 42.0% three; its 4M fell to 70.5% /
+    # 38.5% as G2 got worse), with a gate margin on the airframe (hardware `hwm_`).
+    # 3M, snapshots every 0.5M: 7f peaked at 3M of fine-tuning, so pick the best.
+    "team7": [
+        (3.0e6, "hwm_team", PHASE_ARGS[3]),
+    ],
 }
 
 
@@ -169,8 +182,9 @@ def main() -> int:
                          "under the speed limit), team3 (run 7c, from run 7b's 8M "
                          "at the real window), team4 (run 7d, as 7c with 7b's speed "
                          "penalty and the real floor), team5 (run 7e, from run 7b's 8M: "
-                         "floor launch and the floor penalty) or team6 (run 7f, from "
-                         "run 7e's 3M: airframe gate test, altitude margin)")
+                         "floor launch and the floor penalty) team6 (run 7f, from "
+                         "run 7e's 3M: airframe gate test, altitude margin) or team7 "
+                         "(run 7g, from run 7f's 3M: gate margin on the airframe)")
     ap.add_argument("--steps-scale", type=float, default=1.0,
                     help="multiply every phase boundary (testing the phase chain end to end)")
     ap.add_argument("--dry-run", action="store_true")
