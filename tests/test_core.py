@@ -702,6 +702,35 @@ def test_summary_still_describes_a_run_that_never_succeeds():
         assert want in text, want
 
 
+def test_gate_estimate_separates_the_chosen_line_from_an_estimation_error():
+    """Run 7f's G2 crossings sat +0.14 m to one side.  The summary must say
+    whether the world model saw that offset (the policy chose the line) or did
+    not (an estimation error): per gate, the true and decoded means and their
+    difference, in the gate frame."""
+    ev = _load_evaluate()
+
+    def rec(cs):
+        return dict(success=True, cause=0, gates=len(cs), duration=1.0, gate_times=[0.5] * len(cs),
+                    gate_err=[0.1] * len(cs), margin=0.3, vmax=5.0, amax=2.0, crossings=cs)
+
+    # G1: the policy flies +0.15 off-centre and knows it.  G2: it flies +0.15
+    # off-centre while believing it is centred.
+    chosen = [dict(gate=0, true_y=0.15, true_z=0.0, dec_y=0.15, dec_z=0.0),
+              dict(gate=1, true_y=0.15, true_z=-0.1, dec_y=0.0, dec_z=-0.1)]
+    s = ev.summarize([rec(chosen), rec(chosen)], {}, n_gates=2, laps=1)
+    ge = s["gate_estimate"]
+    assert ge[0]["n"] == 2
+    assert ge[0]["err_mean"] == pytest.approx([0.0, 0.0])
+    assert ge[1]["true_mean"] == pytest.approx([0.15, -0.1])
+    assert ge[1]["dec_mean"] == pytest.approx([0.0, -0.1])
+    assert ge[1]["err_mean"] == pytest.approx([-0.15, 0.0])
+    assert "at the gate: true vs decoded CoM" in ev.report("team", s, "physical")
+
+    # Records from a run without the decoder (or an older dump) add nothing.
+    old = [dict(gate=0, y=0.1, z=0.0), dict(gate=1, y=0.1, z=0.0)]
+    assert "gate_estimate" not in ev.summarize([rec(old)], {}, n_gates=2, laps=1)
+
+
 def test_eval_driver_stops_integrating_dead_episodes():
     """`scripts/evaluate.py` drives the batched env itself instead of going
     through embodied's driver, and the driver is what normally resets an env on

@@ -300,6 +300,11 @@ def _rollout(agent, cfg_env, episodes: int, laps: int, seed: int, chunk: int = 6
             u = np.clip((a + 1.0) / 2.0, 0.0, 1.0)
 
             live = alive & ~finished
+            # Decoded and true position at the same instant, kept for the gate
+            # crossing below: does the agent think it is where it is, at the gate?
+            with jax.transfer_guard("allow"):
+                p_pre = np.asarray(st.s.p)
+            dec_p = np.asarray(outs["recon_info_p_w"]) if "recon_info_p_w" in outs else None
             for key in ("p_w", "v_w"):
                 rk = f"recon_info_{key}"
                 if rk in outs:
@@ -367,12 +372,25 @@ def _rollout(agent, cfg_env, episodes: int, laps: int, seed: int, chunk: int = 6
                     local = np.asarray(
                         jnp.einsum("bij,bj->bi", gate_rotation(yaw), jnp.asarray(p) - centre)
                     )
+                    # The step before the crossing, in the same gate frame: the
+                    # truth and what the world model decodes from its latent.
+                    local_pre = np.asarray(
+                        jnp.einsum("bij,bj->bi", gate_rotation(yaw), jnp.asarray(p_pre) - centre)
+                    )
+                    local_dec = None if dec_p is None else np.asarray(
+                        jnp.einsum("bij,bj->bi", gate_rotation(yaw), jnp.asarray(dec_p) - centre)
+                    )
                 off = np.maximum(np.abs(local[:, 1]), np.abs(local[:, 2]))
                 for i in np.nonzero(crossed)[0]:
-                    crossings[i].append(dict(gate=int((plane[i] - 1) // 3 % n_gates),
-                                             y=float(local[i, 1]), z=float(local[i, 2]),
-                                             speed=float(speed[i]), alt=float(-p[i, 2]),
-                                             vz=float(v[i, 2])))
+                    c = dict(gate=int((plane[i] - 1) // 3 % n_gates),
+                             y=float(local[i, 1]), z=float(local[i, 2]),
+                             speed=float(speed[i]), alt=float(-p[i, 2]),
+                             vz=float(v[i, 2]),
+                             lap=len(crossings[i]) // n_gates,
+                             true_y=float(local_pre[i, 1]), true_z=float(local_pre[i, 2]))
+                    if local_dec is not None:
+                        c.update(dec_y=float(local_dec[i, 1]), dec_z=float(local_dec[i, 2]))
+                    crossings[i].append(c)
                     gate_times[i].append((t + 1) * CONTROL_DT)
                     gate_errs[i].append(float(np.hypot(local[i, 1], local[i, 2])))
                     margin[i] = min(margin[i], float(d_g[i] - off[i]))
@@ -559,6 +577,32 @@ def summarize(records, decode: dict, n_gates: int, laps: int):
 
     if decode:
         out["decode_error"] = decode
+    gate_est = gate_estimate(records, n_gates)
+    if gate_est:
+        out["gate_estimate"] = gate_est
+    return out
+
+
+def gate_estimate(records, n_gates: int):
+    """Per gate, where the drone truly crossed vs where the world model decoded it
+    (gate frame, the step before the crossing).  A bias in `true` that `dec` shares
+    is the policy's chosen line; a bias in `true` that `dec` does not see is an
+    estimation error the policy cannot correct."""
+    out = {}
+    for g in range(n_gates):
+        cs = [c for r in records for c in r.get("crossings", []) if c["gate"] == g and "dec_y" in c]
+        if not cs:
+            continue
+        a = {k: np.array([c[k] for c in cs]) for k in ("true_y", "true_z", "dec_y", "dec_z")}
+        ey, ez = a["dec_y"] - a["true_y"], a["dec_z"] - a["true_z"]
+        out[g] = dict(
+            n=len(cs),
+            true_mean=[float(a["true_y"].mean()), float(a["true_z"].mean())],
+            dec_mean=[float(a["dec_y"].mean()), float(a["dec_z"].mean())],
+            true_sd=[float(a["true_y"].std()), float(a["true_z"].std())],
+            err_mean=[float(ey.mean()), float(ez.mean())],
+            err_sd=[float(ey.std()), float(ez.std())],
+        )
     return out
 
 
@@ -639,6 +683,15 @@ def report(name: str, s: dict, protocol: str = "paper") -> str:
                 continue
             e = f"   first {EARLY_STEPS} steps {early[k]:.3f}" if k in early else ""
             L.append(f"{'decode err ' + k:<20}whole flight {dec[k]:.3f}{e}")
+    ge = s.get("gate_estimate")
+    if ge:
+        L.append("\n--- at the gate: true vs decoded CoM, gate frame (y lateral, z vertical) [m] ---")
+        L.append("  gate   n     true mean (y, z)   decoded mean (y, z)   true sd (y, z)   "
+                 "dec-true mean (y, z)   dec-true sd (y, z)")
+        for g, r in ge.items():
+            f2 = lambda v: f"{v[0]:+.3f} {v[1]:+.3f}"
+            L.append(f"  G{int(g) + 1:<4} {r['n']:<5} {f2(r['true_mean']):<18} {f2(r['dec_mean']):<21} "
+                     f"{f2(r['true_sd']):<16} {f2(r['err_mean']):<22} {f2(r['err_sd'])}")
     return "\n".join(L)
 
 
