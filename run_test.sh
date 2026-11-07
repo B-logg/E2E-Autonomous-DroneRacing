@@ -194,6 +194,9 @@ hist.parent.mkdir(parents=True, exist_ok=True)
 with hist.open("a") as f:
     for p in sorted(snap.glob("evaluation*.json")):
         d = json.loads(p.read_text())
+        # evaluation_*_episodes.json (per-flight dump) is a list, not a summary
+        if not isinstance(d, dict) or "success_rate" not in d:
+            continue
         diag = d.get("diagnostics", {})
         term = diag.get("termination", {})
         total = sum(term.values()) or 1
