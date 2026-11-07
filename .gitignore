@@ -16,3 +16,7 @@ ferede_rl/
 demos/
 expert_demo/
 expert_video_*/
+
+# ./run_compare.sh results (checkpoint copies included)
+compare/
+eval_7g/

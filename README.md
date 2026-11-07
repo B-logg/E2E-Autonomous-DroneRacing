@@ -119,6 +119,10 @@ erosion을 끄면 같은 체크포인트가 1랩 65.5%, 3랩 36.5%입니다. 이
 7g차는 7f차 3M 스냅샷에서, 실제 게이트 면에서 기체 외곽 최대 오프셋이 0.45 m를 넘으면 1 m당 200 감점(`track.gate_margin_penalty`)을 더해 3M 스텝 학습합니다:
 `./run.sh --finetune <7f차 3M 스냅샷>/ckpt --team7`.
 
+7g차는 2M에서 중단했습니다. 가장 좋은 스냅샷(0.5M, 1.5M)도 3랩 39~43%로 7f차 3M(42%)과 같은 수준이었고, 기체 외곽 걸림이 줄어든 만큼 바닥 추락이 늘었습니다.
+체크포인트 비교는 이제 `./run_compare.sh 이름=<스냅샷> 이름=<스냅샷>`으로 합니다. 같은 비행 400개(seed 20000)로 1·3랩을 평가하고,
+비행별로 짝지어 비교하며(`scripts/compare_evals.py`), 이륙 추락과 비행 중 바닥 추락의 원인을 궤적으로 진단합니다(`scripts/diagnose_failures.py`).
+
 ### 참고
 - SkyDreamer (https://arxiv.org/abs/2510.14783)
 - MonoRace (https://arxiv.org/abs/2601.15222)

@@ -752,3 +752,53 @@ would be ~50%; 80% needs ~1.5% per crossing at every gate and the vertical estim
 Evaluation fixes: the `worst point offset` percentiles skipped gate index 1 (the
 inverted loop's invisible gate, i.e. G2 on `team`); they now skip invisible gates.
 `run_test.sh` no longer stops on the per-flight `*_episodes.json` dumps.
+
+### Run 7g's result, and how checkpoints are compared from now on
+
+Run 7g's snapshots (physical, floor launch, seed 10 000, n = 100 each; 7f's 3M for
+reference). Swept/x is per real-gate crossing with the worst point past 0.6 m.
+
+| | 1 lap | 3 laps | first: swept | first: floor | first: takeoff | swept/x | G2 | lap |
+|---|---|---|---|---|---|---|---|---|
+| 7f 3M | 82% | 42% | 42% | 10% | 4% | 5.2% | 10.0% | 5.00 s |
+| 7g 0.5M | 77% | 39% | 36% | 16% | 7% | 4.8% | 7.4% | 5.02 s |
+| 7g 1.0M | 71% | 27% | 50% | 16% | 6% | 7.3% | 14.8% | 5.00 s |
+| 7g 1.5M | 74% | 43% | 34% | 15% | 4% | 4.9% | 6.8% | 4.89 s |
+| 7g 2.0M | 63% | 20% | 60% | 14% | 4% | 10.6% | 18.7% | 4.63 s |
+
+The margin did not do what it was for: at its best snapshots (0.5M, 1.5M) swept-first
+fell 42 -> 34-36% and floor-first rose 10 -> 15-16% (most of it between G3 and G4),
+the same 3-lap total. The snapshots also swing far more than n = 100 explains: 1.5M ->
+2M is 43 -> 20% on the same flights (McNemar p < 0.001). Run 7g was stopped at 2M.
+The best policy is 7f 3M or 7g 1.5M, which these numbers cannot separate (paired
+difference -1%, 95% CI -14 to +12 points).
+
+Two things in that data change how checkpoints are scored:
+
+- **Every checkpoint flies the same flights.** evaluate.py deals them from
+  `key(seed + k)`, so at the same (seed, episodes) each checkpoint gets the same
+  airframes, starts and noise. Flights 43 and 89 crashed on takeoff under five of
+  six checkpoints. Records now carry `seed`, `index`, the flight's `params` and
+  `start`, and `scripts/compare_evals.py` pairs checkpoints flight by flight
+  (McNemar's exact test on the flights they disagree on).
+- **Pairing does not rescue n = 100 at 3 laps.** 3-lap outcomes under two
+  checkpoints are nearly independent (7f 3M vs 7g 1.5M: both succeed on 20 flights
+  where independence predicts 18), so the paired interval is as wide as the
+  unpaired one, about +-13 points. Resolving 10 points needs ~400 flights.
+
+`./run_compare.sh NAME=<snapshot> NAME=<snapshot> ...` scores each checkpoint on 400
+new flights (seed 20 000) at 1 and 3 laps with `--dump`, which now also keeps the
+motor commands `u` and the decoded position `dp`, then writes the comparison and
+`scripts/diagnose_failures.py`'s report for each. That report splits the floor
+failures that every 7x run has had:
+
+- **Takeoff:** the tip touches once the airframe leans past asin(alt / 0.19 m), 22 deg
+  at 7 cm. It reports how far every takeoff leans while low (a habit, with the
+  crashes as its tail, or a few bad draws) and ranks the flight's draws -- moment
+  coefficients, thrust-to-weight, start -- by how well they separate the crashes.
+- **In flight:** at the point of no return (track.floor_penalty's stop, at the
+  flight's own thrust-to-weight) a crash is `late` (already near full throttle),
+  `estimate` (decoded >= 0.15 m higher than true) or `policy` (knew, and kept
+  sinking), next to the finishers' lowest point on the same leg.
+
+Those call for different fixes, so the next run waits for that report.

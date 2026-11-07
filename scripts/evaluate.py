@@ -257,6 +257,13 @@ def _rollout(agent, cfg_env, episodes: int, laps: int, seed: int, chunk: int = 6
         # Thrust-to-weight of each airframe: takeoff deaths track it (docs/deviations.md).
         with jax.transfer_guard("allow"):
             twr_b = np.asarray(st.params.k_w * 4 * st.params.w_max ** 2 / 9.81)
+            # What each flight was dealt: the same (seed, episodes) deals every
+            # checkpoint the same flights, so two checkpoints can be compared
+            # flight by flight, and a flight that fails under every checkpoint
+            # can be traced to its draw (scripts/diagnose_failures.py).
+            params_b = {k: np.asarray(v) for k, v in st.params._asdict().items()}
+            p0_b = np.asarray(st.s.p)
+            yaw0_b = np.degrees(np.asarray(quat_to_euler(st.s.q))[:, 2])
 
         alive = np.ones(b, bool)
         finished = np.zeros(b, bool)
@@ -275,7 +282,7 @@ def _rollout(agent, cfg_env, episodes: int, laps: int, seed: int, chunk: int = 6
         amax = np.zeros(b)
         decode_err = {k: [] for k in ("p_w", "v_w")}
         decode_early = {k: [] for k in ("p_w", "v_w")}
-        trace_p, trace_q, trace_v = [], [], []
+        trace_p, trace_q, trace_v, trace_u, trace_dp = [], [], [], [], []
         prev_gates = np.zeros(b, int)
         prev_v = np.zeros((b, 3))
         is_first = np.ones(b, bool)
@@ -348,6 +355,9 @@ def _rollout(agent, cfg_env, episodes: int, laps: int, seed: int, chunk: int = 6
                 trace_p.append(p.copy())
                 trace_q.append(q.copy())
                 trace_v.append(v.copy())
+            if dump:
+                trace_u.append(u.copy())
+                trace_dp.append(np.full_like(p_pre, np.nan) if dec_p is None else dec_p.copy())
             for i in np.nonzero(terminated)[0]:
                 end[i] = dict(step=t + 1, alt=float(-p[i, 2]), p=p[i].tolist(), v=v[i].tolist(),
                               tilt_deg=_tilt_deg(q[i]))
@@ -440,12 +450,20 @@ def _rollout(agent, cfg_env, episodes: int, laps: int, seed: int, chunk: int = 6
                     floor_pen=float(floor_pen[i]),
                     vmax=float(vmax[i]),
                     amax=float(amax[i]),
+                    seed=int(seed),
+                    index=int(done_total + i),
+                    start=dict(p=p0_b[i].tolist(), yaw_deg=float(yaw0_b[i])),
+                    params={k: (float(v[i]) if v[i].ndim == 0 else v[i].tolist())
+                            for k, v in params_b.items()},
                 )
             )
             if dump:
                 n = int(steps[i])
+                # Step t: p, v, q after it; u the command flown during it; dp the
+                # position the world model decoded before it (i.e. of p[t-1]).
                 records[-1]["_traj"] = {k: np.stack(tr, 1)[i, :n].astype(np.float32)
-                                        for k, tr in (("p", trace_p), ("v", trace_v), ("q", trace_q))}
+                                        for k, tr in (("p", trace_p), ("v", trace_v), ("q", trace_q),
+                                                      ("u", trace_u), ("dp", trace_dp))}
         for k, v in decode_err.items():
             if v:
                 decode_all[k].append(np.concatenate(v))
@@ -721,7 +739,8 @@ def main() -> int:
                     help="start mid-air as Table III, not on the floor (track.LAUNCH): "
                          "the protocol every run before 7e was scored under")
     ap.add_argument("--dump", action="store_true",
-                    help="also write every flight's ground-truth p, v, q to <stem>_traj.npz")
+                    help="also write every flight's ground-truth p, v, q, its motor commands u "
+                         "and decoded position dp to <stem>_traj.npz")
     ap.add_argument("--erosion", type=float, default=None,
                     help="chance the 1-pixel mask erosion is on (default: the env's, 0.5); "
                          "0 shows every frame as rendered")
@@ -788,14 +807,15 @@ def main() -> int:
     stem += args.tag
     out = args.out or (logdir / f"{stem}.json")
     out.write_text(json.dumps(
-        {"track": track, "protocol": args.protocol, "laps": args.laps, "hardware": hw, **summary}, indent=2))
+        {"track": track, "protocol": args.protocol, "laps": args.laps, "hardware": hw,
+         "seed": args.seed, "episodes": args.episodes, **summary}, indent=2))
     (logdir / f"{stem}.txt").write_text(text)
     # Every episode, for working out *why* flights fail (crash state, where each
     # gate was crossed); summaries alone could not answer that for run 7b/7c.
     (logdir / f"{stem}_episodes.json").write_text(json.dumps(records))
     if traj is not None:
         np.savez_compressed(logdir / f"{stem}_traj.npz", **{
-            f"{k}_{i}": t[k] for i, t in enumerate(traj) for k in ("p", "v", "q")})
+            f"{k}_{i}": t[k] for i, t in enumerate(traj) for k in ("p", "v", "q", "u", "dp")})
     print(f"\nwrote {out}")
     return 0
 
