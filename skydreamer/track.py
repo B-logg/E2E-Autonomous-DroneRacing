@@ -345,6 +345,71 @@ def gate_margin_penalty(worst: jax.Array, margin: float = GATE_MARGIN,
     return w * jnp.maximum(worst - margin, 0.0)
 
 
+# NOT FROM THE PAPER.  Run 7f's 3M, 400 flights x 3 laps (seed 20000), every real
+# crossing scored by hardware.check_flight: a crossing whose centre is within d_g
+# (0.45 m) at both the pre- and the post-plane clipped the opening 1 time in 3,080;
+# the rest, 17.8%.  The training test is the right one -- the policy fails it.
+# Where: the pre-plane is broken by 4% of G1's crossings, 25% of G2's, 12% of G3's
+# and G4's, and a crossing that broke it clips 18-49% of the time (0.5-2.5% if
+# not).  The breaks hardly depend on the airframe drawn (|rank-biserial| <= 0.16).
+# They follow II-C's progress term, which pays the straight-line distance to the
+# pre-plane's centre: from G1's post-plane that line meets G2 31 deg off its normal
+# and 1.5 m below (the flights: 29 deg p50, 0.47 m beside and 0.38 m below G2's
+# axis a metre out), and G2 -> G3 is a vertical drop onto a vertical gate.  Every
+# further training run from 7f's 3M (7f to 4M, 7g, 7h) flew G1 -> G2 faster (1.66
+# -> 1.48-1.50 s) and lost precision there.
+#
+# So each gate gets an approach line: its normal, from `APPROACH[g]` m out to the
+# pre-plane.  approach_distance is the distance still to fly by way of that line
+# -- to its outer end, then along it -- and replaces the straight line in the
+# progress term; at APPROACH = t_g / 2 it is II-C's.  It is continuous, so the
+# progress it pays sums to start minus end like II-C's: it changes which way is
+# "forward", not what a leg pays.  approach_reward is what does change it: crossing
+# the line's outer end pays `W_APPROACH` times 1 - offset / d_g, clipped to
+# [-1, 1] -- the gate reward's shape, without ending the flight.
+# The lengths come from the same flights: G1's U-turn from G4 starts too close to
+# fit more than its 0.4 (the turn already comes within 0.16 m of the wall), G3's
+# split-S only reaches 0.8 m back on 93% of laps (75% at 1.0 m), G2 and G4 have
+# room for 1.0 and 1.2 (no flight's centre went past x = 6.04 m or 3.25 m up).
+APPROACH = {"team": (0.4, 1.0, 0.8, 1.2)}   # m from the gate plane, per gate
+W_APPROACH = W_GATE / 2
+
+
+def approach_distance(p_w: jax.Array, track, plane_idx: jax.Array, t_g: jax.Array,
+                      approach: jax.Array) -> jax.Array:
+    """Distance from `p_w` to the pre-plane of `plane_idx`'s gate by way of the
+    gate's approach line, `approach[gate]` m out along its normal: to the line's
+    outer end while further out than that, then straight to the line and along it."""
+    gate = (plane_idx // PLANES_PER_GATE) % track.n_gates
+    half = t_g / 2.0
+    a = jnp.maximum(approach[gate], half)
+    loc = gate_rotation(track.yaw[gate]) @ (p_w - track.pos[gate])
+    s = jnp.clip(loc[0], -a, -half)
+    return jnp.sqrt((loc[0] - s) ** 2 + loc[1] ** 2 + loc[2] ** 2) + (-half - s)
+
+
+def approach_crossing(p_prev: jax.Array, p_next: jax.Array, track, plane_idx: jax.Array,
+                      t_g: jax.Array, approach: jax.Array):
+    """Whether the step p_prev -> p_next crossed the outer end of the approach line
+    of `plane_idx`'s gate, forward, and the offset (max of |y|, |z|) there.  Never
+    for a line no longer than the pre-plane's distance (t_g / 2)."""
+    gate = (plane_idx // PLANES_PER_GATE) % track.n_gates
+    a = approach[gate]
+    R = gate_rotation(track.yaw[gate])
+    l0 = R @ (p_prev - track.pos[gate])
+    l1 = R @ (p_next - track.pos[gate])
+    f = jnp.clip((-a - l0[0]) / jnp.where(l1[0] == l0[0], 1.0, l1[0] - l0[0]), 0.0, 1.0)
+    yz = l0[1:] + f * (l1[1:] - l0[1:])
+    off = jnp.max(jnp.abs(yz))
+    crossed = (a > t_g / 2.0) & (l0[0] < -a) & (l1[0] >= -a)
+    return crossed, off
+
+
+def approach_reward(off: jax.Array, d_g: jax.Array, w: float = W_APPROACH) -> jax.Array:
+    """`w` times the gate reward's 1 - off / d_g, clipped to [-1, 1]."""
+    return w * jnp.clip(1.0 - off / d_g, -1.0, 1.0)
+
+
 # --------------------------------------------------------------------------
 # Flight plan vector (section II-H)
 # --------------------------------------------------------------------------

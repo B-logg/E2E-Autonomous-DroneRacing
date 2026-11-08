@@ -178,6 +178,9 @@ class SkyDreamer:
                 extra["launch"] = T.LAUNCH[base]
                 if hw and hw.get("launch_tip"):
                     extra["w_launch_tip"] = T.W_LAUNCH_TIP
+            if hw and hw.get("approach") and base in T.APPROACH:
+                extra["approach"] = T.APPROACH[base]
+                extra["w_approach"] = T.W_APPROACH
             if base in T.AIR_START:
                 extra["air_start_alt"] = T.AIR_START[base]
             self._cfg = EnvConfig(

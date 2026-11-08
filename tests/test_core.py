@@ -1055,6 +1055,9 @@ def test_finetune_schedule_names_real_tasks():
     # run 7h: run 7f's 3M agent again, no leaning before it is off the floor, 2M
     assert [(s, t) for s, t, _ in train.FINETUNE["team8"]] == [(2e6, "hwl_team")]
     assert train.FINETUNE["team8"][0][2] == train.PHASE_ARGS[3]
+    # run 7i: run 7f's 3M agent again, each gate's approach line, 2M
+    assert [(s, t) for s, t, _ in train.FINETUNE["team9"]] == [(2e6, "hwi_team")]
+    assert train.FINETUNE["team9"][0][2] == train.PHASE_ARGS[3]
 
 
 def test_forward_camera_moves_the_viewpoint():
@@ -1703,5 +1706,129 @@ def test_run_7h_charges_leaning_before_the_airframe_is_clear_of_the_floor():
             _, _, r_n, _, _ = env_step(st, u, new)
             _, _, r_o, _, _ = env_step(st, u, old)
             assert float(r_n) == pytest.approx(float(r_o), abs=1e-5)
+    finally:
+        hardware.apply_dynamics(None)
+
+
+def test_approach_distance_runs_along_the_gate_normal():
+    """track.approach_distance: II-C's straight line at APPROACH = t_g / 2; else to
+    the line's outer end, then along it -- continuous at both of its ends."""
+    tr = T.team_track()
+    t_g = jnp.float32(0.8)
+    half = 0.4
+    g = 1                                          # G2
+    plane = jnp.array(g * T.PLANES_PER_GATE, jnp.int32)
+    R = T.gate_rotation(tr.yaw[g])
+    at = lambda x, y, z: tr.pos[g] + R.T @ jnp.array([x, y, z])   # noqa: E731
+    pre = at(-half, 0.0, 0.0)
+    short = jnp.full(4, half)
+    a = 1.0
+    long = jnp.array([0.4, a, 0.8, 1.2])
+    with jax.transfer_guard("allow"):
+        for p in (at(-2.0, 0.5, 0.3), at(-0.7, -0.2, 0.4), at(-0.1, 1.0, 0.0)):
+            assert float(T.approach_distance(p, tr, plane, t_g, short)) == pytest.approx(
+                float(jnp.linalg.norm(p - pre)), abs=1e-5)
+        # behind the outer end: to it, then the line's length
+        p = at(-2.0, 0.5, 0.3)
+        want = float(jnp.linalg.norm(p - at(-a, 0.0, 0.0))) + (a - half)
+        assert float(T.approach_distance(p, tr, plane, t_g, long)) == pytest.approx(want, abs=1e-5)
+        # on the line's stretch: off it, plus what is left of it
+        p = at(-0.7, -0.2, 0.4)
+        want = float(jnp.hypot(0.2, 0.4)) + (0.7 - half)
+        assert float(T.approach_distance(p, tr, plane, t_g, long)) == pytest.approx(want, abs=1e-5)
+        # continuous at both ends, and the same as II-C at the pre-plane
+        for x in (-a, -half):
+            lo = float(T.approach_distance(at(x - 1e-4, 0.3, -0.2), tr, plane, t_g, long))
+            hi = float(T.approach_distance(at(x + 1e-4, 0.3, -0.2), tr, plane, t_g, long))
+            assert lo == pytest.approx(hi, abs=1e-3)
+        p = at(-half, 0.3, -0.2)
+        assert float(T.approach_distance(p, tr, plane, t_g, long)) == pytest.approx(
+            float(jnp.linalg.norm(p - pre)), abs=1e-5)
+
+
+def test_approach_crossing_is_forward_through_the_outer_end_only():
+    tr = T.team_track()
+    t_g = jnp.float32(0.8)
+    g = 3                                          # G4, 1.2 m
+    plane = jnp.array(g * T.PLANES_PER_GATE, jnp.int32)
+    R = T.gate_rotation(tr.yaw[g])
+    at = lambda x, y, z: tr.pos[g] + R.T @ jnp.array([x, y, z])   # noqa: E731
+    long = jnp.asarray(T.APPROACH["team"], jnp.float32)
+    with jax.transfer_guard("allow"):
+        crossed, off = T.approach_crossing(at(-1.3, 0.1, -0.3), at(-1.1, 0.3, -0.1), tr, plane, t_g, long)
+        assert bool(crossed) and float(off) == pytest.approx(0.2, abs=1e-5)   # halfway
+        back, _ = T.approach_crossing(at(-1.1, 0.0, 0.0), at(-1.3, 0.0, 0.0), tr, plane, t_g, long)
+        inside, _ = T.approach_crossing(at(-1.0, 0.0, 0.0), at(-0.9, 0.0, 0.0), tr, plane, t_g, long)
+        assert not bool(back) and not bool(inside)
+        # G1's line is its pre-plane already: no crossing of its own
+        p1 = jnp.array(0, jnp.int32)
+        R1 = T.gate_rotation(tr.yaw[0])
+        g1 = lambda x: tr.pos[0] + R1.T @ jnp.array([x, 0.0, 0.0])   # noqa: E731
+        none, _ = T.approach_crossing(g1(-0.5), g1(-0.3), tr, p1, t_g, long)
+        assert not bool(none)
+    assert float(T.approach_reward(jnp.float32(0.0), 0.45)) == pytest.approx(T.W_APPROACH)
+    assert float(T.approach_reward(jnp.float32(0.45), 0.45)) == pytest.approx(0.0, abs=1e-5)
+    assert float(T.approach_reward(jnp.float32(3.0), 0.45)) == pytest.approx(-T.W_APPROACH)
+
+
+def test_run_7i_pays_progress_along_the_approach_line_and_being_on_it_once():
+    """hwi_ = hwa_ plus track.APPROACH: everything else as 7f."""
+    from skydreamer import env as E
+    from skydreamer import hardware
+    new, old = _team_cfg("hwi_team"), _team_cfg("hwa_team")
+    assert new.approach == T.APPROACH["team"] and new.w_approach == T.W_APPROACH
+    assert old.approach is None and old.w_approach == 0.0
+    assert _team_cfg("hw_team").approach is None          # evaluation: no shaping
+    assert new.swept_points is not None and new.w_alt == old.w_alt and new.w_floor == old.w_floor
+    assert new.w_gate_margin == 0.0 and new.w_launch_tip == 0.0 and new.launch == old.launch
+    assert hardware.full_hw("hwi_team") == "hw_team"
+    hardware.apply_dynamics(hardware.TWR_CENTRAL)
+    u = jnp.full(4, 0.5)
+    g = 1                                                 # G2: its line starts 1.0 m out
+    a = T.APPROACH["team"][g]
+    try:
+        with jax.transfer_guard("allow"):
+            yaw = new.track.yaw[g]
+            R = T.gate_rotation(yaw)
+            st, _ = reset(jax.random.key(0), new._replace(train_fraction=1.0))
+            assert not bool(st.approached)
+            plane = jnp.array(g * T.PLANES_PER_GATE, jnp.int32)
+
+            def flying(x, y, cfg):
+                p = new.track.pos[g] + R.T @ jnp.array([x, y, 0.0])
+                s = st.s._replace(p=p, v=R.T @ jnp.array([5.0, 0.0, 0.0]),
+                                  q=euler_to_quat(0.0, 0.0, yaw), omega_b=jnp.zeros(3))
+                return st._replace(s=s, plane=plane, plane0=plane, armed=jnp.array(True),
+                                   grounded=jnp.array(False), airborne=jnp.array(True),
+                                   approached=jnp.array(False),
+                                   prev_dist=E._progress_distance(cfg, p, plane, st.t_g))
+
+            def diff(x, y, approached=False):
+                sn = flying(x, y, new)._replace(approached=jnp.array(approached))
+                so = flying(x, y, old)
+                st_n, _, r_n, term_n, _ = env_step(sn, u, new)
+                st_o, _, r_o, term_o, _ = env_step(so, u, old)
+                assert not bool(term_n) and not bool(term_o)
+                assert jnp.allclose(st_n.s.p, st_o.s.p)
+                prog = T.W_PROG * ((float(sn.prev_dist) - float(E._progress_distance(new, st_n.s.p, plane, st.t_g)))
+                                   - (float(so.prev_dist) - float(jnp.linalg.norm(
+                                       st_o.s.p - T.plane_pose(new.track, plane, st.t_g)[0]))))
+                return float(r_n) - float(r_o) - prog, st_n
+
+            # 2 cm behind the line's outer end at 5 m/s, 0.3 m right: crosses it this step
+            extra, st_n = diff(-a - 0.02, 0.3)
+            assert bool(st_n.approached)
+            assert extra == pytest.approx(T.W_APPROACH * (1.0 - 0.3 / float(st.d_g)), abs=0.05)
+            # already paid at this gate: nothing more
+            extra, _ = diff(-a - 0.02, 0.3, approached=True)
+            assert extra == pytest.approx(0.0, abs=1e-3)
+            # inside the line, no crossing: progress only
+            extra, st_n = diff(-0.7, 0.3)
+            assert extra == pytest.approx(0.0, abs=1e-3) and not bool(st_n.approached)
+            # the next gate starts unpaid: through G2's post-plane with the flag set
+            post = jnp.array(g * T.PLANES_PER_GATE + 2, jnp.int32)
+            sp = flying(0.38, 0.0, new)._replace(plane=post, approached=jnp.array(True))
+            st_n, *_ = env_step(sp, u, new)
+            assert int(st_n.plane) == post + 1 and not bool(st_n.approached)
     finally:
         hardware.apply_dynamics(None)

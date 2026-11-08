@@ -162,6 +162,11 @@ class EnvConfig(NamedTuple):
     # airframe is clear of the floor (0 = off).  Needs `launch` and `floor`.
     launch_tip: float = trk.LAUNCH_TIP_BUFFER
     w_launch_tip: float = 0.0
+    # track.APPROACH: per gate, m out along its normal where its approach line
+    # starts.  Progress is paid along it (track.approach_distance) and crossing its
+    # outer end pays track.approach_reward times `w_approach`.  None = II-C.
+    approach: tuple[float, ...] | None = None
+    w_approach: float = 0.0
 
 
 class EnvState(NamedTuple):
@@ -212,6 +217,9 @@ class EnvState(NamedTuple):
     # episode; track.altitude_penalty only charges once it has, so a launch climbs
     # through the margin for free.
     alt_ok: jax.Array
+    # `EnvConfig.approach`: whether the current gate's approach reward has been
+    # paid (once a gate: flying back out and in again does not pay twice).
+    approached: jax.Array
 
 
 def _mix(a: float, b: float, use_train: jax.Array) -> jax.Array:
@@ -340,7 +348,7 @@ def reset(key: jax.Array, cfg: EnvConfig) -> tuple[EnvState, dict]:
         armed=armed0,
         fp_index=start_gate,
         fp_done=jnp.array(False),
-        prev_dist=jnp.linalg.norm(p_w - target),
+        prev_dist=_progress_distance(cfg, p_w, plane, b["t_g"]),
         step_count=jnp.array(0, jnp.int32),
         done=jnp.array(False),
         action_buf=jnp.zeros((ACTION_DELAY_STEPS, 4)),
@@ -352,6 +360,7 @@ def reset(key: jax.Array, cfg: EnvConfig) -> tuple[EnvState, dict]:
         grounded=launch,
         airborne=~launch,
         alt_ok=jnp.array(False),
+        approached=jnp.array(False),
     )
     # Prime the image buffer so the first observations are consistent rather
     # than blank; the real drone likewise has valid frames before it launches.
@@ -455,6 +464,18 @@ def observe(state: EnvState, cfg: EnvConfig) -> dict:
     }
 
 
+def _progress_distance(cfg: EnvConfig, p_w: jax.Array, plane: jax.Array, t_g: jax.Array):
+    """II-C's distance to the target plane; to a pre-plane by way of its gate's
+    approach line (track.approach_distance) when `cfg.approach` is set."""
+    target, _, _ = trk.plane_pose(cfg.track, plane, t_g)
+    straight = jnp.linalg.norm(p_w - target)
+    if cfg.approach is None:
+        return straight
+    along = trk.approach_distance(p_w, cfg.track, plane, t_g,
+                                  jnp.asarray(cfg.approach, jnp.float32))
+    return jnp.where((plane % trk.PLANES_PER_GATE) == 0, along, straight)
+
+
 def step(state: EnvState, action: jax.Array, cfg: EnvConfig):
     # One key per consumer.  Reusing a key across two draws makes those draws
     # perfectly correlated, which silently couples unrelated randomness.
@@ -525,7 +546,7 @@ def step(state: EnvState, action: jax.Array, cfg: EnvConfig):
     r_gate = jnp.where(passed, r_cross, 0.0)
     hit_gate = passed & struck
 
-    dist_now = jnp.linalg.norm(s_next.p - target)
+    dist_now = _progress_distance(cfg, s_next.p, state.plane, state.t_g)
     # II-C: progress is only shaped toward the *pre*-gate; it is zeroed once the
     # drone is inside the pre..post volume (sub-plane 1 or 2).
     active = (state.plane % trk.PLANES_PER_GATE) == 0
@@ -547,7 +568,15 @@ def step(state: EnvState, action: jax.Array, cfg: EnvConfig):
         tip = trk.lowest_point(s_next.p, euler, cfg.floor[0])
         r_rate = r_rate + jnp.where(
             airborne, 0.0, trk.launch_tip_penalty(tip, cfg.launch_tip, cfg.w_launch_tip))
-    reward = trk.W_PROG * r_prog - r_rate + trk.W_GATE * r_gate
+    approached = state.approached
+    r_approach = jnp.array(0.0)
+    if cfg.approach is not None and cfg.w_approach:
+        crossed, off = trk.approach_crossing(state.s.p, s_next.p, cfg.track, state.plane,
+                                             state.t_g, jnp.asarray(cfg.approach, jnp.float32))
+        first = crossed & ~approached & ((state.plane % trk.PLANES_PER_GATE) == 0)
+        r_approach = jnp.where(first, trk.approach_reward(off, state.d_g, cfg.w_approach), 0.0)
+        approached = approached | first
+    reward = trk.W_PROG * r_prog - r_rate + trk.W_GATE * r_gate + r_approach
 
     if cfg.floor is not None:
         hit_ground = trk.floor_collision(s_next.p, euler, *cfg.floor)
@@ -578,7 +607,10 @@ def step(state: EnvState, action: jax.Array, cfg: EnvConfig):
     fp_done = (state.fp_done | do_inc) & ~(passed & (sub == 2))
 
     next_target, next_yaw, _ = trk.plane_pose(cfg.track, plane, state.t_g)
-    prev_dist = jnp.where(passed, jnp.linalg.norm(s_next.p - next_target), dist_now)
+    prev_dist = jnp.where(passed, _progress_distance(cfg, s_next.p, plane, state.t_g), dist_now)
+    # A new gate, a new line.  Its reward needs a crossing from behind its outer
+    # end: after G2 the drone is already inside G3's 0.8 m axially, 1.5 m above it.
+    approached = approached & ~(passed & (sub == 2))
     p_next = trk.gate_rotation(next_yaw) @ (s_next.p - next_target)
     armed = jnp.where(passed, p_next[0] < 0.0, armed)
 
@@ -601,6 +633,7 @@ def step(state: EnvState, action: jax.Array, cfg: EnvConfig):
         grounded=grounded,
         airborne=airborne,
         alt_ok=alt_ok,
+        approached=approached,
     )
 
     # --- image delay: the policy sees a frame IMAGE_DELAY_STEPS old

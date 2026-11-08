@@ -118,6 +118,11 @@ OWN_GATE_D_G = {"team": (0.50, 0.45)}
 # test's failures (docs/deviations.md).  Run 7h, from 7f's 3M:
 #   hwl_  `hwa_` plus track.launch_tip_penalty: the lowest prop tip under 2 cm
 #         before the airframe is clear of the floor.  No gate margin.
+# Run 7h's 1.5M lost to 7f's 3M by 21 points over 3 laps (25.0 vs 46.2%, paired
+# p < 0.001) and crashed on takeoff more, not less; its takeoffs leaned as 7f's.
+# Run 7i, from 7f's 3M again:
+#   hwi_  `hwa_` plus track.APPROACH: progress paid along each gate's approach
+#         line and a reward for being on it where it starts (track.approach_reward).
 # `None` for d_g / t_g / twr means the paper's value.
 HW_STAGES = {
     "hw1_": dict(HW_PROFILE, gate_outer=2.4, twr=None, d_g=None, t_g=None),
@@ -133,6 +138,8 @@ HW_STAGES = {
                  w_floor=W_FLOOR_STRONG, swept_gate=True, alt_margin=True, gate_margin=True),
     "hwl_": dict(HW_PROFILE, own_gate_d_g=(0.45, 0.45), floor_penalty=True,
                  w_floor=W_FLOOR_STRONG, swept_gate=True, alt_margin=True, launch_tip=True),
+    "hwi_": dict(HW_PROFILE, own_gate_d_g=(0.45, 0.45), floor_penalty=True,
+                 w_floor=W_FLOOR_STRONG, swept_gate=True, alt_margin=True, approach=True),
     HW_PREFIX: HW_PROFILE,
 }
 

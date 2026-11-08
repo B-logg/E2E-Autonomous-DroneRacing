@@ -850,3 +850,66 @@ flights (`./run_compare.sh 7f3M=... 7h0.5M=...`; results already in `compare/`
 are not scored again). If it works, the takeoff share falls toward zero: ~3 points at one lap and
 ~2 at three (a saved takeoff still has to fly the laps); it does not touch the airframe at the opening or
 the floor in flight, which are 47 of the 54 points still missing at 3 laps.
+
+### Run 7h's result, and run 7i: an approach line for each gate
+
+Run 7h's 1.5M against 7f's 3M on the same 400 flights (seed 20000, physical):
+
+| | 1 lap | 3 laps | airframe at the opening, per crossing | takeoff |
+|---|---|---|---|---|
+| 7f 3M | 76.8% | 46.2% | 4.4% | 4.2% |
+| 7h 1.5M | 60.8% | 25.0% | 9.6% | 6.8% |
+
+Paired, 7f minus 7h is +16.0 points at one lap (+10.8 to +21.2) and +21.2 at three
+(+15.6 to +26.9), McNemar p < 0.001 both. The takeoff did not change: tilt at steps
+5/10/15/20 is 0.2/5.7/11.6/16.1 deg (p50) against 7f's 0.1/5.4/12.9/15.0, and the
+tip comes within 1 cm on 2.6% of flights against 2.8%. 13 flights crash on takeoff
+under 7h only, 3 under 7f only. Like 7g, and like 7f's own 4M, 7h flew faster
+(3.94 -> 4.12 m/s mean; G1 -> G2 in 1.48 s against 1.66) and less precisely. 7h is
+stopped; 7f's 3M stays the base.
+
+**Where three laps are lost (7f 3M, 4,057 real crossings).** For 80% over three
+laps the airframe has to clip the opening on ~1% of crossings (now 4.3%: 0.957^12 =
+58% of flights survive twelve) and the floor take ~1% a lap (now ~4%). Most clips
+are near misses (61% of failing crossings are at 0.60-0.70 m), and the spread, not a
+bias, makes them: the mean offset per gate is under 0.05 m, the spread 0.17-0.24 m,
+and the decoded offsets spread as far (estimation error 0.08-0.14 m). The policy
+flies those lines on purpose.
+
+A crossing whose centre is within d_g at both of 7f's training planes (+-0.4 m)
+clipped the opening once in 3,080. The pre-plane is where it goes wrong:
+
+| | G1 | G2 | G3 | G4 |
+|---|---|---|---|---|
+| pre-plane broken (> 0.45 m) | 4% | 25% | 12% | 12% |
+| clipped when broken | 26% | 18% | 24% | 49% |
+| clipped when not | 1.3% | 2.5% | 0.8% | 0.5% |
+| broken toward | the side | below, G1's side | above (split-S) | above |
+
+The breaks hardly depend on the airframe (|rank-biserial| <= 0.16 for every
+parameter). They follow II-C's progress term, the straight-line distance to the
+pre-plane's centre: from G1 that line meets G2 31 deg off its normal and 1.5 m
+below; the flights cross G2's pre-plane 29 deg off (p50), 0.47 m beside and 0.38 m
+below its axis a metre out. G2 -> G3 is a vertical drop onto a vertical gate.
+
+**Run 7i** (`hwi_`, `./run.sh --finetune <run 7f 3M snapshot>/ckpt --team9`, 2M,
+snapshots every 0.25M): 7f's settings plus `track.APPROACH`, a line along each
+gate's normal from G1 0.4, G2 1.0, G3 0.8, G4 1.2 m out to the pre-plane.
+`track.approach_distance` (to the line's outer end, then along it) replaces the
+straight line in the progress term; it is continuous, so a leg still pays start
+minus end -- it changes which way is forward. `track.approach_reward` pays 15 (half
+a gate) times 1 - offset / d_g, clipped to [-1, 1], once per gate where the line
+starts; it does not end the flight. The lengths: G1's U-turn from G4 leaves no room
+past 0.4 (it already comes within 0.16 m of the wall); G3's split-S reaches 0.8 m
+back on 93% of laps, 1.0 m on 75%; G2 and G4 have room (no flight went past
+x = 6.04 m or above 3.25 m). On 7f's 3M flights, crossings on the line where it
+starts (<= 0.45 m) clip the opening on 1.0% (G2), 1.1% (G3), 0.5% (G4) against
+8.5%, 6.6%, 16.0% off it, and the reward would have paid them 6-12 more than
+the ones that clipped.
+
+Expectation: if the pre-plane breaks at G2-G4 fell to G1's 4%, twelve crossings
+would survive 75% instead of 58% (86% with none); with today's takeoff and floor
+that is the mid-60s over three laps, not 80. The floor's estimation error (30 of 47
+floor crashes decode 0.17-0.24 m high) and the airframe model behind the takeoff
+(3-lap success 19% at TWR < 2.8, 59% above 4.3; our drone's thrust is unmeasured)
+are the next steps.

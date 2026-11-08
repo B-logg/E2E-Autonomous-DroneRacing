@@ -31,6 +31,14 @@ invocation resuming from the previous phase's checkpoint in the same logdir.
     stage 4   7   -> 10M   hw_team, the paper's phase-3 fine-tune settings
     (./run.sh --finetune <ckpt> --team)
 
+  --finetune team9 (run 7i, 2M steps; docs/deviations.md)
+    run 7f's 3M agent, phase-3 settings throughout:
+    stage 1   0   -> 2M    hwi_team: as hwa_team, with progress paid along each
+                           gate's approach line (track.APPROACH: G1 0.4, G2 1.0,
+                           G3 0.8, G4 1.2 m) and a reward for being on it where
+                           it starts (track.approach_reward)
+    (./run.sh --finetune <run 7f 3M ckpt> --team9)
+
   --finetune team8 (run 7h, 2M steps; docs/deviations.md)
     run 7f's 3M agent, phase-3 settings throughout:
     stage 1   0   -> 2M    hwl_team: as hwa_team, plus a cost on the lowest prop
@@ -178,6 +186,12 @@ FINETUNE = {
     "team8": [
         (2.0e6, "hwl_team", PHASE_ARGS[3]),
     ],
+    # run 7i: run 7f's 3M agent again (7h's 1.5M lost to it, 25.0 vs 46.2% over 3
+    # laps), with each gate's approach line (hardware `hwi_`).  2M, snapshots every
+    # 0.25M: every run from 7f's 3M so far was worse by 1.5M, so pick the best.
+    "team9": [
+        (2.0e6, "hwi_team", PHASE_ARGS[3]),
+    ],
 }
 
 
@@ -198,8 +212,9 @@ def main() -> int:
                          "penalty and the real floor), team5 (run 7e, from run 7b's 8M: "
                          "floor launch and the floor penalty) team6 (run 7f, from "
                          "run 7e's 3M: airframe gate test, altitude margin), team7 "
-                         "(run 7g, from run 7f's 3M: gate margin on the airframe) or "
-                         "team8 (run 7h, from run 7f's 3M: no leaning before clear of the floor)")
+                         "(run 7g, from run 7f's 3M: gate margin on the airframe), "
+                         "team8 (run 7h, from run 7f's 3M: no leaning before clear of the floor) or "
+                         "team9 (run 7i, from run 7f's 3M: each gate's approach line)")
     ap.add_argument("--steps-scale", type=float, default=1.0,
                     help="multiply every phase boundary (testing the phase chain end to end)")
     ap.add_argument("--dry-run", action="store_true")
