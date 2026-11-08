@@ -913,3 +913,51 @@ that is the mid-60s over three laps, not 80. The floor's estimation error (30 of
 floor crashes decode 0.17-0.24 m high) and the airframe model behind the takeoff
 (3-lap success 19% at TWR < 2.8, 59% above 4.3; our drone's thrust is unmeasured)
 are the next steps.
+
+### Run 7i's result, and run 7j: the true state as an input (a diagnostic)
+
+Run 7i, `physical` on `team`, 400 paired flights (seed 20000):
+
+| | 1 lap | 3 laps | swept fails per crossing (3 laps) | G2 |
+|---|---|---|---|---|
+| 7f 3M | 76.8% | 46.2% | 4.4% | 6.2% |
+| 7i 0.5M | 63.0% | 31.2% | 6.5% | 8.2% |
+| 7i 1M | 68.2% | 27.5% | 7.9% | 10.1% |
+
+The line was learned and did not help. At G2, 7i 0.5M crossed on the line where it
+starts (<= 0.45 m) 72% of the time against 7f's 30%, and those crossings clipped the
+opening on 7.7% against 7f's 1.0%: 7f's on-line crossings were clean because the
+calm flights were the ones on it, not because being on it made them calm. G1, which
+7i left alone, went from 2.2% to 7.2% by 1M -- as 7g and 7h, a fine-tune from 7f's
+3M drifts whatever it is asked. Stopped at ~1M.
+
+What limits the policy, on 7f's 3M flights (3 laps):
+- The window. The opening's 0.6 m less the 0.19 m reach leaves the centre +-0.41 m,
+  and the airframe at the crossing reaches 0.15 m past the centre (p50). The centre
+  crosses with a spread of 0.17-0.24 m per axis; 1% a crossing needs ~0.14. The
+  decoded position is itself 0.10 m off at the gates (p50; p90 0.20).
+- Thrust. 3-lap success is 32% below TWR 3.5, 43% at 3.5-4.5, 62% at 4.5-5.5 and
+  64% above; floor crashes 39 of 115 flights below 3.5, 2 of 39 above 5.5.
+- Rescoring the same flights against a wider opening (an upper bound, not a
+  prediction): 46% at 1.2 m, 67% at 1.5 m; 62% and 77% for TWR >= 4.5.
+- Not the speed penalty: just before a floor crash the drone was over V_CAP no
+  longer than the survivors at their lowest point (G3->G4 79 vs 76%, G4->G1 66 vs
+  71%), and pushed the motors as hard (0.51 vs 0.48 after G3).
+
+**Run 7j** (`hwo_`, a diagnostic, never deployable): 7f's settings with the true
+state also in the encoder's input -- observation `true_state`, `env.ORACLE_KEYS`
+(position, velocity in the world and the gate frame, attitude, rates: 19 numbers).
+It still decodes the same `info_*` targets. `scripts/oracle_ckpt.py` appends zero
+rows for those inputs to 7f 3M's `enc/mlp0/kernel` and its Adam moments, so the
+fine-tune starts as 7f's policy exactly (checked: identical actions over 60 steps).
+Scored as `hw_` with the input kept (`hwoe_`, `hardware.keep_oracle`).
+
+    python scripts/oracle_ckpt.py <run 7f 3M snapshot>/ckpt oracle_7f3M/ckpt
+    ./run.sh --finetune oracle_7f3M/ckpt --oracle      # 2M, snapshots every 0.25M
+
+Reading it: first check that the input is used -- `decode err p_w` in the
+evaluation should fall well below 7f's 0.237 m; if it has not by 1M, phase 3's lr
+(2e-6) is too slow for new weights and the run says nothing yet. Then: 3 laps near
+90% means the policy is limited by what it can estimate; 50-60% means by the
+airframe and the room, i.e. thrust. In between, compare against a fine-tune from
+7f's 3M without the input (every one so far lost 15-20 points by 1M).

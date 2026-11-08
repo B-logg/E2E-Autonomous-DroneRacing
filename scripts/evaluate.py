@@ -753,7 +753,7 @@ def main() -> int:
     import ruamel.yaml as yaml
 
     task = yaml.YAML(typ="safe").load((logdir / "config.yaml").read_text())["task"]
-    from skydreamer.hardware import full_hw, split_task
+    from skydreamer.hardware import full_hw, keep_oracle, split_task
 
     # A run trained on our hardware (`hw_*`) is scored on our hardware: `--track big`
     # means `hw_big` there, not the paper's drone on the big track.  A run part-way
@@ -762,6 +762,7 @@ def main() -> int:
     track = args.track or trained_on
     if split_task(trained_on)[0] is not None:
         track = full_hw(track if split_task(track)[0] else "hw_" + track)
+    track = keep_oracle(trained_on, track)
 
     from skydreamer.embodied_env import SkyDreamer
 

@@ -31,6 +31,12 @@ invocation resuming from the previous phase's checkpoint in the same logdir.
     stage 4   7   -> 10M   hw_team, the paper's phase-3 fine-tune settings
     (./run.sh --finetune <ckpt> --team)
 
+  --finetune oracle (run 7j, a diagnostic, 2M steps; docs/deviations.md)
+    run 7f's 3M agent converted by scripts/oracle_ckpt.py, phase-3 settings:
+    stage 1   0   -> 2M    hwo_team: as hwa_team, with the true state
+                           (env.ORACLE_KEYS) as observation `true_state`
+    (./run.sh --finetune <converted ckpt> --oracle)
+
   --finetune team9 (run 7i, 2M steps; docs/deviations.md)
     run 7f's 3M agent, phase-3 settings throughout:
     stage 1   0   -> 2M    hwi_team: as hwa_team, with progress paid along each
@@ -192,6 +198,12 @@ FINETUNE = {
     "team9": [
         (2.0e6, "hwi_team", PHASE_ARGS[3]),
     ],
+    # run 7j, a diagnostic: run 7f's 3M agent, converted by scripts/oracle_ckpt.py,
+    # with the true state as an input (hardware `hwo_`) and 7f's settings otherwise.
+    # How far does the policy get once nothing has to be estimated?
+    "oracle": [
+        (2.0e6, "hwo_team", PHASE_ARGS[3]),
+    ],
 }
 
 
@@ -213,8 +225,9 @@ def main() -> int:
                          "floor launch and the floor penalty) team6 (run 7f, from "
                          "run 7e's 3M: airframe gate test, altitude margin), team7 "
                          "(run 7g, from run 7f's 3M: gate margin on the airframe), "
-                         "team8 (run 7h, from run 7f's 3M: no leaning before clear of the floor) or "
-                         "team9 (run 7i, from run 7f's 3M: each gate's approach line)")
+                         "team8 (run 7h, from run 7f's 3M: no leaning before clear of the floor), "
+                         "team9 (run 7i, from run 7f's 3M: each gate's approach line) or "
+                         "oracle (run 7j, a diagnostic: run 7f's 3M with the true state as an input)")
     ap.add_argument("--steps-scale", type=float, default=1.0,
                     help="multiply every phase boundary (testing the phase chain end to end)")
     ap.add_argument("--dry-run", action="store_true")

@@ -99,7 +99,7 @@ if grep -q 'task: skydreamer_hw' "${RUN_DIR}/config.yaml"; then
   echo "run trained on our drone and gate -> protocol: ${PROTOCOLS[*]}"
 fi
 [ ${#PROTOCOLS[@]} -gt 0 ] || PROTOCOLS=(paper)
-case "$(cat "${RUN_DIR}/finetune_schedule" 2>/dev/null)" in team|team2|team3|team4|team5|team6|team7|team8|team9) TEAM_RUN=1 ;; *) TEAM_RUN=0 ;; esac
+case "$(cat "${RUN_DIR}/finetune_schedule" 2>/dev/null)" in team|team2|team3|team4|team5|team6|team7|team8|team9|oracle) TEAM_RUN=1 ;; *) TEAM_RUN=0 ;; esac
 if [ "${TEAM_RUN}" = "1" ]; then
   # Runs 7, 7b, 7c and 7d are trained and judged on our track alone.
   [ ${#TRACKS[@]} -gt 0 ] || TRACKS=(team)

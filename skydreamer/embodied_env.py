@@ -181,6 +181,8 @@ class SkyDreamer:
             if hw and hw.get("approach") and base in T.APPROACH:
                 extra["approach"] = T.APPROACH[base]
                 extra["w_approach"] = T.W_APPROACH
+            if hw and hw.get("oracle"):
+                extra["oracle"] = True
             if base in T.AIR_START:
                 extra["air_start_alt"] = T.AIR_START[base]
             self._cfg = EnvConfig(
@@ -216,7 +218,7 @@ class SkyDreamer:
         el = _spaces()
         n = self._size
         vec = lambda d: el.Space(np.float32, (d,))  # noqa: E731
-        from .env import PACK_MASK
+        from .env import ORACLE_DIM, PACK_MASK
 
         # Bit-packed: eight pixels per byte.  The agent's `packbits` config
         # names this key and expands it back to (n, n, 1) before the encoder,
@@ -240,6 +242,9 @@ class SkyDreamer:
             "info_meas_rpm": vec(4),
             "info_flight_plan": vec(T.FLIGHT_PLAN_DIM),
         }
+        hw, _ = hardware.split_task(self._task)
+        if hw and hw.get("oracle"):   # the diagnostic `hwo_`: the true state, as an input
+            out["true_state"] = vec(ORACLE_DIM)
         # `log/*` never reaches the agent -- embodied strips it in the driver
         # and again in the replay buffer -- but the spaces still have to
         # declare it, and run/train.py aggregates it per episode.

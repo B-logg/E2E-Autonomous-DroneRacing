@@ -1058,6 +1058,9 @@ def test_finetune_schedule_names_real_tasks():
     # run 7i: run 7f's 3M agent again, each gate's approach line, 2M
     assert [(s, t) for s, t, _ in train.FINETUNE["team9"]] == [(2e6, "hwi_team")]
     assert train.FINETUNE["team9"][0][2] == train.PHASE_ARGS[3]
+    # run 7j, a diagnostic: run 7f's 3M agent with the true state as an input, 2M
+    assert [(s, t) for s, t, _ in train.FINETUNE["oracle"]] == [(2e6, "hwo_team")]
+    assert train.FINETUNE["oracle"][0][2] == train.PHASE_ARGS[3]
 
 
 def test_forward_camera_moves_the_viewpoint():
@@ -1832,3 +1835,67 @@ def test_run_7i_pays_progress_along_the_approach_line_and_being_on_it_once():
             assert int(st_n.plane) == post + 1 and not bool(st_n.approached)
     finally:
         hardware.apply_dynamics(None)
+
+
+def test_run_7j_hands_the_encoder_the_true_state_and_nothing_else_changes():
+    """hwo_ = hwa_ plus `true_state` (env.ORACLE_KEYS) as an input; scored as hw_
+    with that input kept (hwoe_), since the policy cannot fly without it."""
+    from skydreamer import env as E
+    from skydreamer import hardware
+    from skydreamer.embodied_env import SkyDreamer
+    new, old = _team_cfg("hwo_team"), _team_cfg("hwa_team")
+    assert new.oracle and not old.oracle and not _team_cfg("hw_team").oracle
+    def same(a, b):     # every EnvConfig field, arrays and the track included
+        la, lb = jax.tree.leaves(a._replace(oracle=False)), jax.tree.leaves(b._replace(oracle=False))
+        return len(la) == len(lb) and all(np.array_equal(np.asarray(x), np.asarray(y))
+                                          for x, y in zip(la, lb))
+    assert same(new, old)
+    ev = _team_cfg("hwoe_team")
+    assert ev.oracle and same(ev, _team_cfg("hw_team"))
+    assert not same(new, _team_cfg("hwi_team"))           # the comparison can fail
+    assert hardware.full_hw("hwo_team") == "hwoe_team"
+    assert hardware.keep_oracle("hwoe_team", "hw_team") == "hwoe_team"
+    assert hardware.keep_oracle("hwoe_team", "hwoe_team") == "hwoe_team"
+    assert hardware.keep_oracle("hw_team", "hw_team") == "hw_team"
+    assert hardware.keep_oracle("hwa_team", "hw_team") == "hw_team"
+    assert "true_state" in SkyDreamer("hwo_team").obs_space
+    assert "true_state" in SkyDreamer("hwoe_team").obs_space
+    assert "true_state" not in SkyDreamer("hwa_team").obs_space
+    assert SkyDreamer("hwo_team").obs_space["true_state"].shape == (E.ORACLE_DIM,)
+    hardware.apply_dynamics(hardware.TWR_CENTRAL)
+    try:
+        with jax.transfer_guard("allow"):
+            st, obs = reset(jax.random.key(0), new)
+            _, obs_old = reset(jax.random.key(0), old)
+        assert sum(int(np.prod(obs[k].shape)) for k in E.ORACLE_KEYS) == E.ORACLE_DIM
+        np.testing.assert_array_equal(
+            np.asarray(obs["true_state"]),
+            np.concatenate([np.asarray(obs[k]) for k in E.ORACLE_KEYS]))
+        assert set(obs) - set(obs_old) == {"true_state"}
+        # sorted after `rpm`, so scripts/oracle_ckpt.py's rows go last
+        enc = sorted(k for k in obs if not k.startswith(("info_", "log/")) and k != "mask")
+        assert enc[-1] == "true_state"
+    finally:
+        hardware.apply_dynamics(None)
+
+
+def test_oracle_ckpt_appends_zero_rows_to_the_first_encoder_layer_only():
+    import importlib.util
+    spec = importlib.util.spec_from_file_location(
+        "sd_oracle_ckpt", pathlib.Path(__file__).resolve().parents[1] / "scripts" / "oracle_ckpt.py")
+    oc = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(oc)
+    rng = np.random.default_rng(0)
+    w = rng.normal(size=(oc.BASE_ROWS, 8)).astype(np.float32)
+    params = {"enc/mlp0/kernel": w.copy(), "opt/state/1/1/enc/mlp0/kernel": w.copy(),
+              "opt/state/2/1/enc/mlp0/kernel": w.copy(), "enc/mlp0/bias": np.ones(8, np.float32),
+              "enc/mlp1/kernel": np.ones((8, 8), np.float32)}
+    hits = oc.widen(params, 19)
+    assert len(hits) == 3
+    for k in hits:
+        assert params[k].shape == (oc.BASE_ROWS + 19, 8)
+        np.testing.assert_array_equal(params[k][:oc.BASE_ROWS], w)
+        assert not params[k][oc.BASE_ROWS:].any()
+    assert params["enc/mlp1/kernel"].shape == (8, 8) and params["enc/mlp0/bias"].shape == (8,)
+    with pytest.raises(SystemExit):        # converting twice
+        oc.widen(params, 19)

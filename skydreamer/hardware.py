@@ -123,6 +123,14 @@ OWN_GATE_D_G = {"team": (0.50, 0.45)}
 # Run 7i, from 7f's 3M again:
 #   hwi_  `hwa_` plus track.APPROACH: progress paid along each gate's approach
 #         line and a reward for being on it where it starts (track.approach_reward).
+# Run 7i's approach line was learned (G2 on it 30% -> 72%) and its crossings got no
+# cleaner; every fine-tune from 7f's 3M has lost to it.  Before another reward, a
+# diagnostic -- is the precision limited by what the policy can estimate from the
+# mask and IMU, or by the airframe and the room?
+#   hwo_   `hwa_` with the true state in the encoder's input (env.ORACLE_KEYS as
+#          observation `true_state`).  Never deployable; scripts/oracle_ckpt.py adds
+#          zero weights for it to 7f's 3M, so the fine-tune starts as 7f's policy.
+#   hwoe_  what `hwo_` is scored on: `hw_` plus the same input (full_hw).
 # `None` for d_g / t_g / twr means the paper's value.
 HW_STAGES = {
     "hw1_": dict(HW_PROFILE, gate_outer=2.4, twr=None, d_g=None, t_g=None),
@@ -140,6 +148,9 @@ HW_STAGES = {
                  w_floor=W_FLOOR_STRONG, swept_gate=True, alt_margin=True, launch_tip=True),
     "hwi_": dict(HW_PROFILE, own_gate_d_g=(0.45, 0.45), floor_penalty=True,
                  w_floor=W_FLOOR_STRONG, swept_gate=True, alt_margin=True, approach=True),
+    "hwo_": dict(HW_PROFILE, own_gate_d_g=(0.45, 0.45), floor_penalty=True,
+                 w_floor=W_FLOOR_STRONG, swept_gate=True, alt_margin=True, oracle=True),
+    "hwoe_": dict(HW_PROFILE, oracle=True),
     HW_PREFIX: HW_PROFILE,
 }
 
@@ -160,7 +171,19 @@ def full_hw(task: str) -> str:
     profile, base = split_task(task)
     if profile is None or task.startswith("hwg_"):
         return task
+    if profile.get("oracle"):   # its encoder needs `true_state`; scored otherwise as `hw_`
+        return "hwoe_" + base
     return HW_PREFIX + base
+
+
+def keep_oracle(trained_on: str, track: str) -> str:
+    """A run trained with the true state as an input (`hwo_`) cannot fly without it:
+    `track` (already resolved by full_hw) gets it back, as `hwoe_<base>`."""
+    trained, _ = split_task(trained_on)
+    profile, base = split_task(track)
+    if trained and trained.get("oracle") and not (profile and profile.get("oracle")):
+        return "hwoe_" + base
+    return track
 
 
 def apply_dynamics(twr: float | None) -> None:

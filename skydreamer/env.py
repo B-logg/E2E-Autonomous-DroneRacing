@@ -167,6 +167,10 @@ class EnvConfig(NamedTuple):
     # outer end pays track.approach_reward times `w_approach`.  None = II-C.
     approach: tuple[float, ...] | None = None
     w_approach: float = 0.0
+    # Diagnostic only, never deployable: also hand the encoder the true state as
+    # observation `true_state` (ORACLE_KEYS, concatenated).  It asks how well the
+    # policy flies once nothing has to be estimated.  False = the paper.
+    oracle: bool = False
 
 
 class EnvState(NamedTuple):
@@ -411,6 +415,11 @@ def unpack_mask(packed: jax.Array) -> jax.Array:
     return bits.reshape(h, w8 * 8, c)[..., 0].astype(jnp.float32)
 
 
+# What `cfg.oracle` puts in `true_state`, in this order: 19 numbers.
+ORACLE_KEYS = ("info_p_w", "info_p_g", "info_v_w", "info_v_g", "info_att", "info_rates")
+ORACLE_DIM = 19
+
+
 def observe(state: EnvState, cfg: EnvConfig) -> dict:
     k1, k2 = jax.random.split(jax.random.fold_in(state.key, state.step_count), 2)
 
@@ -424,7 +433,7 @@ def observe(state: EnvState, cfg: EnvConfig) -> dict:
     p_g, v_g, gate_yaw = _gate_relative(state, cfg)
     euler = quat_to_euler(state.s.q)
 
-    return {
+    out = {
         # --- observation o_t: what the policy sees at deployment ---
         "mask": (
             pack_mask(state.mask_buf[0]) if PACK_MASK
@@ -462,6 +471,9 @@ def observe(state: EnvState, cfg: EnvConfig) -> dict:
         "log/rate_l1": jnp.sum(jnp.abs(state.s.omega_b)).astype(jnp.float32),
         "log/speed": jnp.linalg.norm(state.s.v).astype(jnp.float32),
     }
+    if cfg.oracle:
+        out["true_state"] = jnp.concatenate([out[k] for k in ORACLE_KEYS]).astype(jnp.float32)
+    return out
 
 
 def _progress_distance(cfg: EnvConfig, p_w: jax.Array, plane: jax.Array, t_g: jax.Array):
