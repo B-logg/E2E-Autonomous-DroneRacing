@@ -89,6 +89,17 @@ NOTES = {
         "the Table III values above; leaving the room (x -4..7, y -4..4, "
         "ceiling 3.5 m) ends the episode.",
     ],
+    "team4up": [
+        "What-if, not built: `team` with G4 raised 0.5 m on a stand (centre 1.25 m). "
+        "Every other setting is team's.",
+    ],
+    "team14up": [
+        "What-if, not built: `team4up` with G1 raised 0.25 m too (centre 1.0 m).",
+    ],
+    "team44up": [
+        "`team` with G1 and G4 both raised 0.5 m on stands (centre 1.25 m), the "
+        "team's 0.5 m build step. Trained as hwa_team44up (run 7k).",
+    ],
 }
 
 

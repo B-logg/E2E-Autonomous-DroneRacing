@@ -419,6 +419,231 @@
           "visible": true
         }
       ]
+    },
+    "team4up": {
+      "notes": [
+        "What-if, not built: `team` with G4 raised 0.5 m on a stand (centre 1.25 m). Every other setting is team's."
+      ],
+      "gate_size_m": {
+        "inner": 1.2,
+        "outer": 1.5
+      },
+      "tunnel_t_g_m": "Table III default",
+      "counts": {
+        "total": 4,
+        "real": 4,
+        "virtual": 0
+      },
+      "extent_m": {
+        "x": [
+          -1.0,
+          4.0
+        ],
+        "y": [
+          -2.0,
+          2.0
+        ],
+        "altitude": [
+          0.75,
+          2.25
+        ]
+      },
+      "gates": [
+        {
+          "index": 1,
+          "position_m": [
+            -1.0,
+            -2.0,
+            -0.75
+          ],
+          "altitude_m": 0.75,
+          "yaw_deg": 0.0,
+          "visible": true
+        },
+        {
+          "index": 2,
+          "position_m": [
+            4.0,
+            0.0,
+            -2.25
+          ],
+          "altitude_m": 2.25,
+          "yaw_deg": 0.0,
+          "visible": true
+        },
+        {
+          "index": 3,
+          "position_m": [
+            4.0,
+            0.0,
+            -0.75
+          ],
+          "altitude_m": 0.75,
+          "yaw_deg": 180.0,
+          "visible": true
+        },
+        {
+          "index": 4,
+          "position_m": [
+            -1.0,
+            2.0,
+            -1.25
+          ],
+          "altitude_m": 1.25,
+          "yaw_deg": 180.0,
+          "visible": true
+        }
+      ]
+    },
+    "team14up": {
+      "notes": [
+        "What-if, not built: `team4up` with G1 raised 0.25 m too (centre 1.0 m)."
+      ],
+      "gate_size_m": {
+        "inner": 1.2,
+        "outer": 1.5
+      },
+      "tunnel_t_g_m": "Table III default",
+      "counts": {
+        "total": 4,
+        "real": 4,
+        "virtual": 0
+      },
+      "extent_m": {
+        "x": [
+          -1.0,
+          4.0
+        ],
+        "y": [
+          -2.0,
+          2.0
+        ],
+        "altitude": [
+          0.75,
+          2.25
+        ]
+      },
+      "gates": [
+        {
+          "index": 1,
+          "position_m": [
+            -1.0,
+            -2.0,
+            -1.0
+          ],
+          "altitude_m": 1.0,
+          "yaw_deg": 0.0,
+          "visible": true
+        },
+        {
+          "index": 2,
+          "position_m": [
+            4.0,
+            0.0,
+            -2.25
+          ],
+          "altitude_m": 2.25,
+          "yaw_deg": 0.0,
+          "visible": true
+        },
+        {
+          "index": 3,
+          "position_m": [
+            4.0,
+            0.0,
+            -0.75
+          ],
+          "altitude_m": 0.75,
+          "yaw_deg": 180.0,
+          "visible": true
+        },
+        {
+          "index": 4,
+          "position_m": [
+            -1.0,
+            2.0,
+            -1.25
+          ],
+          "altitude_m": 1.25,
+          "yaw_deg": 180.0,
+          "visible": true
+        }
+      ]
+    },
+    "team44up": {
+      "notes": [
+        "`team` with G1 and G4 both raised 0.5 m on stands (centre 1.25 m), the team's 0.5 m build step. Trained as hwa_team44up (run 7k)."
+      ],
+      "gate_size_m": {
+        "inner": 1.2,
+        "outer": 1.5
+      },
+      "tunnel_t_g_m": "Table III default",
+      "counts": {
+        "total": 4,
+        "real": 4,
+        "virtual": 0
+      },
+      "extent_m": {
+        "x": [
+          -1.0,
+          4.0
+        ],
+        "y": [
+          -2.0,
+          2.0
+        ],
+        "altitude": [
+          0.75,
+          2.25
+        ]
+      },
+      "gates": [
+        {
+          "index": 1,
+          "position_m": [
+            -1.0,
+            -2.0,
+            -1.25
+          ],
+          "altitude_m": 1.25,
+          "yaw_deg": 0.0,
+          "visible": true
+        },
+        {
+          "index": 2,
+          "position_m": [
+            4.0,
+            0.0,
+            -2.25
+          ],
+          "altitude_m": 2.25,
+          "yaw_deg": 0.0,
+          "visible": true
+        },
+        {
+          "index": 3,
+          "position_m": [
+            4.0,
+            0.0,
+            -0.75
+          ],
+          "altitude_m": 0.75,
+          "yaw_deg": 180.0,
+          "visible": true
+        },
+        {
+          "index": 4,
+          "position_m": [
+            -1.0,
+            2.0,
+            -1.25
+          ],
+          "altitude_m": 1.25,
+          "yaw_deg": 180.0,
+          "visible": true
+        }
+      ]
     }
   }
 }

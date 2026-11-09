@@ -31,6 +31,12 @@ invocation resuming from the previous phase's checkpoint in the same logdir.
     stage 4   7   -> 10M   hw_team, the paper's phase-3 fine-tune settings
     (./run.sh --finetune <ckpt> --team)
 
+  --finetune team10 (run 7k, 3M steps; docs/deviations.md)
+    run 7f's 3M agent, phase-3 settings, 7f's conditions (hwa_) on the track
+    with G1 and G4 raised 0.5 m (track.TEAM44UP_TRACK):
+    stage 1   0   -> 3M    hwa_team44up
+    (./run.sh --finetune <run 7f 3M ckpt> --team10)
+
   --finetune oracle (run 7j, a diagnostic, 2M steps; docs/deviations.md)
     run 7f's 3M agent converted by scripts/oracle_ckpt.py, phase-3 settings:
     stage 1   0   -> 2M    hwo_team: as hwa_team, with the true state
@@ -204,6 +210,15 @@ FINETUNE = {
     "oracle": [
         (2.0e6, "hwo_team", PHASE_ARGS[3]),
     ],
+    # run 7k: run 7f's 3M agent with 7f's settings, on G1 and G4 raised 0.5 m (the
+    # team builds stands in 0.5 m steps).  Run 7j showed the floor crashes are the
+    # altitude estimate (G3->G4 3.3 -> 0.5%, G4->G1 3.6 -> 0.4% per attempt with the
+    # true state); 0.5 m of room covers the 0.17-0.24 m it is off by.  Scored as it
+    # is, 7f's agent decodes G1 and G4 at their old height (+0.52, +0.42 m): the world
+    # model has to relearn the layout, hence 3M rather than 2M.  Only the track changes.
+    "team10": [
+        (3.0e6, "hwa_team44up", PHASE_ARGS[3]),
+    ],
 }
 
 
@@ -226,7 +241,8 @@ def main() -> int:
                          "run 7e's 3M: airframe gate test, altitude margin), team7 "
                          "(run 7g, from run 7f's 3M: gate margin on the airframe), "
                          "team8 (run 7h, from run 7f's 3M: no leaning before clear of the floor), "
-                         "team9 (run 7i, from run 7f's 3M: each gate's approach line) or "
+                         "team9 (run 7i, from run 7f's 3M: each gate's approach line), "
+                         "team10 (run 7k, from run 7f's 3M: G1 and G4 raised 0.5 m) or "
                          "oracle (run 7j, a diagnostic: run 7f's 3M with the true state as an input)")
     ap.add_argument("--steps-scale", type=float, default=1.0,
                     help="multiply every phase boundary (testing the phase chain end to end)")

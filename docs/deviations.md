@@ -961,3 +961,67 @@ evaluation should fall well below 7f's 0.237 m; if it has not by 1M, phase 3's l
 90% means the policy is limited by what it can estimate; 50-60% means by the
 airframe and the room, i.e. thrust. In between, compare against a fine-tune from
 7f's 3M without the input (every one so far lost 15-20 points by 1M).
+
+### Run 7j's result, the raised-gate what-ifs, and run 7k: G1 and G4 raised 0.5 m
+
+`./run_compare.sh` on 7f's 3M and 7j's 1M / 2M (400 identical flights, seed 20 000,
+physical protocol, floor launch):
+
+| | 1 lap | 3 laps | sim-only, 3 laps | swept/x | swept lateral / vertical | z sd at gates |
+|---|---|---|---|---|---|---|
+| 7f 3M | 76.8% | 46.2% | 72.8% | 4.3% | 86 / 89 | 0.20 m |
+| 7j 1M | 86.5% | 65.5% | 90.0% | 3.1% | 123 / 17 | 0.14 m |
+| 7j 2M | 85.5% | 61.8% | 89.0% | 3.1% | 135 / 4 | 0.12 m |
+
+7j 1M beats 7f 3M by 19.2 points over 3 laps (95% CI +13.2 to +25.3, McNemar p <
+0.001); the fine-tunes from 7f's 3M without the input (7g, 7h, 7i) all lost.
+
+- **The floor crashes are the altitude estimate.** Per attempt of each leg (every
+  flight, swept check ignored): G3->G4 3.3 -> 0.5-1.1%, G4->G1 3.6 -> 0-0.4%.
+- **The vertical half of the swept failures too**: 89 -> 4 crossings.
+- **The lateral half is not.** Lateral fails went 86 -> 135 and the lateral spread at
+  the gates stayed 0.19-0.21 m. 85-95% of it is from crossing to crossing within a
+  flight, not from the airframe draw (correlation with TWR <= 0.34). The decoded
+  error explains R^2 0.08-0.13 of it. Straight crossings (0-10 deg off the gate's
+  normal) still fail laterally at 2.1%. The input was not fully used (`decode err
+  p_w` 0.209 -> 0.185 m), but it was used vertically and not laterally. That fits the
+  shaping: the floor penalty and altitude margin pay for knowing the height, and
+  nothing but the gate reward pays for the lateral position.
+- So even with a perfect estimate, this policy stops at ~62-65% over 3 laps. The
+  lateral spread has to come down from training, from ~0.21 to ~0.16 m, with the G1
+  and G2 lateral biases (0.06-0.14 m) removed.
+
+The fix for the floor without a new sensor is room: raise the gates the estimate
+misses. 7f's 3M scored as it is (no retraining) on four layouts, the same flights:
+
+| 3 laps, floor crash per attempt | team | G4 +0.5 (`team4up`) | G1 +0.25, G4 +0.5 (`team14up`) | G1 +0.5, G4 +0.5 (`team44up`) |
+|---|---|---|---|---|
+| success | 46.2% | 15.0% | 16.8% | 12.5% |
+| takeoff | 4.2% | 2.2% | 2.0% | 2.2% |
+| G3->G4 | 3.3% | 4.4% | 4.8% | 7.5% |
+| G4->G1 | 3.6% | **13.1%** | 0.3% | **0.2%** |
+| swept/x | 4.3% | 11.5% | 11.9% | 15.3% |
+| G1 / G4 decoded - true z | 0.00 / -0.05 m | 0.01 / +0.47 | +0.28 / +0.45 | +0.52 / +0.42 |
+
+- Raising G4 alone moves the crash to the U-turn down into G1. Raising G1 with it
+  removes that crash, and at 0.5 m as well as at 0.25 m.
+- Takeoff does not suffer from the higher G1: 2.0-2.2% against 4.2%, on the same
+  airframes.
+- Everything else is the world model, not the layout. It decodes G1 and G4 at the
+  old height, off by the raise. The first-lap G1 swept failures grow with it (3 ->
+  54 -> 141 of 400), all at the top edge (the drone passes 0.23 / 0.41 m high). G3->G4
+  cannot be judged without retraining.
+
+**Run 7k** (`--team10`): 7f's 3M, 7f's settings (`hwa_`), on `team44up`. The team
+builds stands in 0.5 m steps, and 0.5 m did no worse than 0.25 at takeoff or G4 ->
+G1. 3M rather than 2M because the world model has to relearn the layout; snapshots
+every 0.25M. Only the track changes.
+
+    ./run.sh --finetune <run 7f 3M snapshot>/ckpt --team10
+    ./run_compare.sh --out compare_g44up --track team44up 7f3M=<same> 7k1M=... 7k2M=... 7k3M=...
+
+(`--out compare_g44up` reuses 7f's scores there.) Reading it: (1) G1 and G4 decoded -
+true z back near 0 (it was +0.52 / +0.42); (2) floor per attempt at 7j's level, <= 1%
+on every leg, and G3->G4 under 7f's 3.3% on `team`; (3) takeoff no worse than 7f's
+4.2%; (4) 3 laps against 7f on `team` (46.2%). The lateral spread is the next run's
+target, not this one's.

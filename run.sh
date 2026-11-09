@@ -62,6 +62,9 @@
 #       test at the real floor (track.FLOOR), phase-3 settings, no demonstrations
 #       (scripts/train.py, 2M steps).  Scored and resumed as run 7.
 #   ./run.sh --finetune <ckpt> --team7   ~13 h   run 7g
+#   ./run.sh --finetune <ckpt> --team10  ~14 h   run 7k (from run 7f's 3M snapshot)
+#       7f's settings on the track with G1 and G4 raised 0.5 m (track.TEAM44UP_TRACK),
+#       3M steps, snapshots every 0.25M; compare with run_compare.sh --track team44up.
 #   ./run.sh --finetune <ckpt> --oracle  ~9 h    run 7j, a diagnostic (from run 7f's 3M
 #       snapshot converted by scripts/oracle_ckpt.py): 7f's settings with the true state
 #       in the encoder's input (hardware `hwo_`), 2M steps, snapshots every 0.25M.
@@ -156,6 +159,7 @@ for arg in "$@"; do
     --team8)      TEAM=8 ;;
     --team9)      TEAM=9 ;;
     --oracle)     TEAM=10 ;;
+    --team10)     TEAM=11 ;;
     --demos)      NEXT="demos" ;;
     --resume)     MODE="resume" ;;
     --setup-only) MODE="setup" ;;
@@ -190,6 +194,7 @@ if [ -n "${FT_CKPT}" ]; then
   if [ "${TEAM}" = "8" ]; then FT_SCHED="team8"; HW_TAG="-team8"; fi
   if [ "${TEAM}" = "9" ]; then FT_SCHED="team9"; HW_TAG="-team9"; fi
   if [ "${TEAM}" = "10" ]; then FT_SCHED="oracle"; HW_TAG="-oracle"; fi
+  if [ "${TEAM}" = "11" ]; then FT_SCHED="team10"; HW_TAG="-team10"; fi
 fi
 SNAP_EVERY="${SKYDREAMER_SNAPSHOT_EVERY:-1e6}"
 
@@ -228,7 +233,10 @@ if [ "${TEAM}" = "10" ] && [ "${FT}" = "0" ]; then
   die "--oracle is a fine-tuning schedule: python scripts/oracle_ckpt.py <run 7f 3M snapshot>/ckpt oracle_7f3M/ckpt
      then ./run.sh --finetune oracle_7f3M/ckpt --oracle"
 fi
-if { [ "${TEAM}" = "3" ] || [ "${TEAM}" = "4" ] || [ "${TEAM}" = "5" ] || [ "${TEAM}" = "6" ] || [ "${TEAM}" = "7" ] || [ "${TEAM}" = "8" ] || [ "${TEAM}" = "9" ] || [ "${TEAM}" = "10" ]; } && [ -n "${DEMOS}" ]; then
+if [ "${TEAM}" = "11" ] && [ "${FT}" = "0" ]; then
+  die "--team10 is a fine-tuning schedule: ./run.sh --finetune <run 7f 3M snapshot>/ckpt --team10"
+fi
+if { [ "${TEAM}" = "3" ] || [ "${TEAM}" = "4" ] || [ "${TEAM}" = "5" ] || [ "${TEAM}" = "6" ] || [ "${TEAM}" = "7" ] || [ "${TEAM}" = "8" ] || [ "${TEAM}" = "9" ] || [ "${TEAM}" = "10" ] || [ "${TEAM}" = "11" ]; } && [ -n "${DEMOS}" ]; then
   die "--team${TEAM} trains without demonstrations (run 7b's agent flies the track itself,
      and run 7b, which held them in its buffer, ran out of RAM); drop --demos"
 fi
@@ -627,7 +635,9 @@ else
   log "Training -> ${RUN_DIR}"
   if [ "${FT}" = "1" ]; then
     [ -z "${WARM_CKPT}" ] || die "--finetune loads the whole agent; drop --warm-start"
-    if [ "${FT_SCHED}" = "oracle" ]; then
+    if [ "${FT_SCHED}" = "team10" ]; then
+      echo "Fine-tuning ${FT_CKPT} on our track with G1 and G4 raised 0.5 m: 7f's settings otherwise (scripts/train.py)."
+    elif [ "${FT_SCHED}" = "oracle" ]; then
       echo "Fine-tuning ${FT_CKPT} on our real track: 7f's settings with the true state as an input -- a diagnostic, never deployable (scripts/train.py)."
     elif [ "${FT_SCHED}" = "team9" ]; then
       echo "Fine-tuning ${FT_CKPT} on our real track: 7f's settings plus each gate's approach line (scripts/train.py)."
@@ -737,7 +747,7 @@ PRUNER=$!
 SNAPPER=""
 # Run 7i keeps a snapshot every 0.25M (also when resumed): every run from 7f's 3M
 # was worse by 1.5M.
-if { [ "${FT_SCHED}" = "team9" ] || [ "${FT_SCHED}" = "oracle" ]; } && [ -z "${SKYDREAMER_SNAPSHOT_EVERY:-}" ]; then SNAP_EVERY=2.5e5; fi
+if { [ "${FT_SCHED}" = "team9" ] || [ "${FT_SCHED}" = "oracle" ] || [ "${FT_SCHED}" = "team10" ]; } && [ -z "${SKYDREAMER_SNAPSHOT_EVERY:-}" ]; then SNAP_EVERY=2.5e5; fi
 if [ "${SNAP_EVERY}" != "0" ]; then
   # Copies files out of ckpt/ only; the trainer never waits on it.
   "${PY}" "${ROOT}/scripts/milestone_snapshots.py" --logdir "${RUN_DIR}" \
@@ -755,7 +765,7 @@ trap 'kill ${PRUNER} ${SNAPPER} 2>/dev/null || true' EXIT
     2>&1 | tee -a "${RUN_DIR}/train.log"
 
 log "Evaluating in simulation"
-if [ "${FT_SCHED}" = "team" ] || [ "${FT_SCHED}" = "team2" ] || [ "${FT_SCHED}" = "team3" ] || [ "${FT_SCHED}" = "team4" ] || [ "${FT_SCHED}" = "team5" ] || [ "${FT_SCHED}" = "team6" ] || [ "${FT_SCHED}" = "team7" ] || [ "${FT_SCHED}" = "team8" ] || [ "${FT_SCHED}" = "team9" ] || [ "${FT_SCHED}" = "oracle" ]; then
+if [ "${FT_SCHED}" = "team" ] || [ "${FT_SCHED}" = "team2" ] || [ "${FT_SCHED}" = "team3" ] || [ "${FT_SCHED}" = "team4" ] || [ "${FT_SCHED}" = "team5" ] || [ "${FT_SCHED}" = "team6" ] || [ "${FT_SCHED}" = "team7" ] || [ "${FT_SCHED}" = "team8" ] || [ "${FT_SCHED}" = "team9" ] || [ "${FT_SCHED}" = "oracle" ] || [ "${FT_SCHED}" = "team10" ]; then
   # Our real track: 4 gates a lap, so 5 laps is 20 crossings at a 0.6 m half-opening.
   # Score the flights that matter first -- 1 lap and 3 -- against the real gate.
   for L in 1 3; do

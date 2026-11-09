@@ -1061,6 +1061,9 @@ def test_finetune_schedule_names_real_tasks():
     # run 7j, a diagnostic: run 7f's 3M agent with the true state as an input, 2M
     assert [(s, t) for s, t, _ in train.FINETUNE["oracle"]] == [(2e6, "hwo_team")]
     assert train.FINETUNE["oracle"][0][2] == train.PHASE_ARGS[3]
+    # run 7k: 7f's profile, only the track changes
+    assert [(s, t) for s, t, _ in train.FINETUNE["team10"]] == [(3e6, "hwa_team44up")]
+    assert train.FINETUNE["team10"][0][2] == train.PHASE_ARGS[3]
 
 
 def test_forward_camera_moves_the_viewpoint():
@@ -1150,6 +1153,11 @@ def test_team4up_is_team_with_g4_half_a_metre_up_and_nothing_else():
     np.testing.assert_allclose(c[1:3], 0, atol=1e-7)
     np.testing.assert_allclose(c[[0, 3], 2], [-0.5, -0.5], atol=1e-7)
     assert "hw_team44up" in TRACKS and hardware.OWN_GATE_D_G["team44up"] == hardware.OWN_GATE_D_G["team"]
+    # run 7k trains on hwa_team44up: run 7f's profile, only the gates moved
+    ea, eb = SkyDreamer("hwa_team"), SkyDreamer("hwa_team44up")
+    la, lb = (jax.tree.leaves(e.cfg._replace(track=None)) for e in (ea, eb))
+    assert len(la) == len(lb) and all(np.array_equal(np.asarray(x), np.asarray(y)) for x, y in zip(la, lb))
+    assert hardware.full_hw("hwa_team44up") == "hw_team44up"
     # the raised G4's frame still clears the ceiling
     assert -float(np.asarray(b.pos)[3, 2]) + T.TEAM_OUTER / 2 < T.ROOMS["team"][4]
 
