@@ -669,6 +669,25 @@ def team_track() -> Track:
     return make_track(TEAM_TRACK, inner=TEAM_INNER, outer=TEAM_OUTER)
 
 
+# `team4up`, a what-if (not built): G4 raised 0.5 m on a stand, centre 1.25 m, so
+# the leg from G3 climbs instead of sagging to the floor.  7i's flights dip to a
+# median 0.59 m half-way from G3 to G4, where the G3->G4 floor crashes happen.
+# Scored with run 7f's agent as it is (run_compare.sh --track team4up): its flight
+# plan input carries the gate positions.  Every other table is `team`'s.
+G4_RAISE = 0.5   # m
+TEAM4UP_TRACK = TEAM_TRACK[:3] + [(TEAM_TRACK[3][0], TEAM_TRACK[3][1],
+                                   TEAM_TRACK[3][2] - G4_RAISE, TEAM_TRACK[3][3])]
+
+
+def team4up_track() -> Track:
+    """`team` with G4 raised `G4_RAISE` m."""
+    return make_track(TEAM4UP_TRACK, inner=TEAM_INNER, outer=TEAM_OUTER)
+
+
+for _table in (APPROACH, ROOMS, V_CAP, FLOOR, LAUNCH, AIR_START, ERODE_PX):
+    _table["team4up"] = _table["team"]
+
+
 def left_room(p_w: jax.Array, room) -> jax.Array:
     """True outside the walls or above the ceiling (the floor is ground_collision's)."""
     x_lo, x_hi, y_lo, y_hi, ceiling = room

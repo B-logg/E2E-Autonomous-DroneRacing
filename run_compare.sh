@@ -10,6 +10,7 @@
 #                  10000 that run_test.sh and every earlier score used)
 #   --laps "1 3"   lap counts (default 1 and 3)
 #   --out DIR      where results go (default compare/)
+#   --track T      the layout flown (default team; team4up = G4 raised 0.5 m)
 #
 # NAME=PATH: PATH is a training snapshot (`<run>/snapshots/step_N`, config from
 # `<run>/config.yaml`), an evaluation directory (`<run>/eval/step_N`, or one
@@ -35,6 +36,7 @@ EPISODES=400
 SEED=20000
 LAPS="1 3"
 OUT="${ROOT}/compare"
+TRACK=team
 RUNS=()
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -42,7 +44,8 @@ while [ $# -gt 0 ]; do
     --seed)     SEED="$2"; shift ;;
     --laps)     LAPS="$2"; shift ;;
     --out)      OUT="$2"; shift ;;
-    -h|--help)  sed -n '2,27p' "$0"; exit 0 ;;
+    --track)    TRACK="$2"; shift ;;
+    -h|--help)  sed -n '2,26p' "$0"; exit 0 ;;
     *=*)        RUNS+=("$1") ;;
     *) printf 'unknown argument: %s (expected NAME=PATH)\n' "$1" >&2; exit 2 ;;
   esac
@@ -100,7 +103,7 @@ for r in "${RUNS[@]}"; do
       continue
     fi
     log "${name}: ${EPISODES} flights x ${laps} lap(s), seed ${SEED}"
-    "${PY}" "${ROOT}/scripts/evaluate.py" --logdir "${dest}" --track team --protocol physical \
+    "${PY}" "${ROOT}/scripts/evaluate.py" --logdir "${dest}" --track "${TRACK}" --protocol physical \
         --episodes "${EPISODES}" --laps "${laps}" --seed "${SEED}" --tag "${tag}" --dump
   done
 done

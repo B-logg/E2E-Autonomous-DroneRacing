@@ -63,7 +63,7 @@ HW_PREFIX = "hw_"
 # the same train leniency as `HW_PROFILE`: eval 0.60 - 0.15 = 0.45, train 0.50.
 # It applies with or without an hw prefix -- Table III's 0.8 / 1.0 m would be
 # wider than the opening itself.
-OWN_GATE_D_G = {"team": (0.50, 0.45)}
+OWN_GATE_D_G = {"team": (0.50, 0.45), "team4up": (0.50, 0.45)}   # team4up: track.py
 
 # Run 6 fine-tunes the paper-drone policy (run 3, 17M) instead of training on
 # `hw_` from scratch, which twice settled on diving through gate 3 too fast to

@@ -1120,6 +1120,32 @@ def test_team_track_is_the_plotted_room_not_its_mirror():
     assert (pos[:, 1] > y_lo).all() and (pos[:, 1] < y_hi).all() and (-pos[:, 2] < ceiling).all()
 
 
+def test_team4up_is_team_with_g4_half_a_metre_up_and_nothing_else():
+    """The G4-on-a-stand what-if: one gate moved, every per-track setting shared,
+    and the hw/oracle prefixes resolve on it as on `team`."""
+    from skydreamer import hardware
+    from skydreamer.embodied_env import SkyDreamer, TRACKS
+
+    a, b = T.team_track(), T.team4up_track()
+    dz = np.asarray(b.pos) - np.asarray(a.pos)
+    np.testing.assert_allclose(dz[:3], 0, atol=1e-7)
+    np.testing.assert_allclose(dz[3], [0, 0, -T.G4_RAISE], atol=1e-7)   # NED: up is -z
+    np.testing.assert_allclose(np.asarray(b.yaw), np.asarray(a.yaw))
+    for table in (T.APPROACH, T.ROOMS, T.V_CAP, T.FLOOR, T.LAUNCH, T.AIR_START, T.ERODE_PX,
+                  hardware.OWN_GATE_D_G):
+        assert table["team4up"] == table["team"]
+    assert "hw_team4up" in TRACKS and "hwoe_team4up" in TRACKS
+    # evaluate.py: run 7f (trained on hwa_team) asked for `--track team4up`
+    assert hardware.full_hw("hw_team4up") == "hw_team4up"
+    assert hardware.keep_oracle("hwo_team", "hw_team4up") == "hwoe_team4up"
+    ea, eb = SkyDreamer("hw_team"), SkyDreamer("hw_team4up")
+    ea._build(); eb._build()
+    la, lb = (jax.tree.leaves(e.cfg._replace(track=None)) for e in (ea, eb))
+    assert len(la) == len(lb) and all(np.array_equal(np.asarray(x), np.asarray(y)) for x, y in zip(la, lb))
+    # the raised G4's frame still clears the ceiling
+    assert -float(np.asarray(b.pos)[3, 2]) + T.TEAM_OUTER / 2 < T.ROOMS["team"][4]
+
+
 def test_hw_team_keeps_our_gate_and_window_and_the_room_walls():
     from skydreamer import hardware
     from skydreamer.embodied_env import SkyDreamer
