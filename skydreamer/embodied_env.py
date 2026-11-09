@@ -57,6 +57,7 @@ TRACKS = {
     "team": T.team_track,
     # `team` with G4 raised 0.5 m (track.team4up_track): an evaluation what-if.
     "team4up": T.team4up_track,
+    "team14up": T.team14up_track,   # and G1 raised 0.25 m
 }
 
 # `hw_<track>`: the same layout on our drone and gate (skydreamer/hardware.py,
@@ -78,6 +79,7 @@ TRACK_T_G = {
     "big": 0.5,             # III-D uses t_g = 0.5 for the big track
     "team": None,
     "team4up": None,
+    "team14up": None,
 }
 TRACK_T_G.update({p + k: v if hw["t_g"] is None else hw["t_g"]
                   for p, hw in hardware.HW_STAGES.items() for k, v in list(TRACK_T_G.items())})
@@ -91,6 +93,7 @@ TRACK_W_MAX_DISTURBANCE = {
     "big": BIG_TRACK_W_MAX_DISTURBANCE,
     "team": 0.0,
     "team4up": 0.0,
+    "team14up": 0.0,
 }
 TRACK_W_MAX_DISTURBANCE.update(
     {p + k: v for p in hardware.HW_STAGES for k, v in list(TRACK_W_MAX_DISTURBANCE.items())})

@@ -1142,6 +1142,10 @@ def test_team4up_is_team_with_g4_half_a_metre_up_and_nothing_else():
     ea._build(); eb._build()
     la, lb = (jax.tree.leaves(e.cfg._replace(track=None)) for e in (ea, eb))
     assert len(la) == len(lb) and all(np.array_equal(np.asarray(x), np.asarray(y)) for x, y in zip(la, lb))
+    c = np.asarray(T.team14up_track().pos) - np.asarray(a.pos)
+    np.testing.assert_allclose(c[1:3], 0, atol=1e-7)
+    np.testing.assert_allclose(c[[0, 3], 2], [-T.G1_RAISE, -T.G4_RAISE], atol=1e-7)
+    assert "hw_team14up" in TRACKS and hardware.OWN_GATE_D_G["team14up"] == hardware.OWN_GATE_D_G["team"]
     # the raised G4's frame still clears the ceiling
     assert -float(np.asarray(b.pos)[3, 2]) + T.TEAM_OUTER / 2 < T.ROOMS["team"][4]
 
