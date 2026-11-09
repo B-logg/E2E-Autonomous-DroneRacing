@@ -698,8 +698,21 @@ def team14up_track() -> Track:
     return make_track(TEAM14UP_TRACK, inner=TEAM_INNER, outer=TEAM_OUTER)
 
 
+# `team44up`: G1 raised the same 0.5 m as G4 (centre 1.25 m), the team's preferred
+# build (stands in 0.5 m steps).  G4 -> G1 is level; the launch climbs 0.05 -> 1.25 m
+# over ~2 m (31 deg).
+G1_RAISE_FULL = 0.5  # m
+TEAM44UP_TRACK = [(TEAM4UP_TRACK[0][0], TEAM4UP_TRACK[0][1], TEAM4UP_TRACK[0][2] - G1_RAISE_FULL,
+                   TEAM4UP_TRACK[0][3])] + TEAM4UP_TRACK[1:]
+
+
+def team44up_track() -> Track:
+    """`team4up` with G1 raised `G1_RAISE_FULL` m as well."""
+    return make_track(TEAM44UP_TRACK, inner=TEAM_INNER, outer=TEAM_OUTER)
+
+
 for _table in (APPROACH, ROOMS, V_CAP, FLOOR, LAUNCH, AIR_START, ERODE_PX):
-    _table["team4up"] = _table["team14up"] = _table["team"]
+    _table["team4up"] = _table["team14up"] = _table["team44up"] = _table["team"]
 
 
 def left_room(p_w: jax.Array, room) -> jax.Array:

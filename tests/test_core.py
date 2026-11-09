@@ -1146,6 +1146,10 @@ def test_team4up_is_team_with_g4_half_a_metre_up_and_nothing_else():
     np.testing.assert_allclose(c[1:3], 0, atol=1e-7)
     np.testing.assert_allclose(c[[0, 3], 2], [-T.G1_RAISE, -T.G4_RAISE], atol=1e-7)
     assert "hw_team14up" in TRACKS and hardware.OWN_GATE_D_G["team14up"] == hardware.OWN_GATE_D_G["team"]
+    c = np.asarray(T.team44up_track().pos) - np.asarray(a.pos)
+    np.testing.assert_allclose(c[1:3], 0, atol=1e-7)
+    np.testing.assert_allclose(c[[0, 3], 2], [-0.5, -0.5], atol=1e-7)
+    assert "hw_team44up" in TRACKS and hardware.OWN_GATE_D_G["team44up"] == hardware.OWN_GATE_D_G["team"]
     # the raised G4's frame still clears the ceiling
     assert -float(np.asarray(b.pos)[3, 2]) + T.TEAM_OUTER / 2 < T.ROOMS["team"][4]
 

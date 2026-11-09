@@ -64,7 +64,7 @@ HW_PREFIX = "hw_"
 # It applies with or without an hw prefix -- Table III's 0.8 / 1.0 m would be
 # wider than the opening itself.
 OWN_GATE_D_G = {"team": (0.50, 0.45), "team4up": (0.50, 0.45),
-                "team14up": (0.50, 0.45)}   # team4up, team14up: track.py
+                "team14up": (0.50, 0.45), "team44up": (0.50, 0.45)}   # team*up: track.py
 
 # Run 6 fine-tunes the paper-drone policy (run 3, 17M) instead of training on
 # `hw_` from scratch, which twice settled on diving through gate 3 too fast to

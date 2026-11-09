@@ -11,7 +11,7 @@
 #   --laps "1 3"   lap counts (default 1 and 3)
 #   --out DIR      where results go (default compare/)
 #   --track T      the layout flown (default team; team4up = G4 raised 0.5 m,
-#                  team14up = that and G1 raised 0.25 m)
+#                  team14up = that and G1 raised 0.25 m, team44up = G1 0.5 m)
 #
 # NAME=PATH: PATH is a training snapshot (`<run>/snapshots/step_N`, config from
 # `<run>/config.yaml`), an evaluation directory (`<run>/eval/step_N`, or one
