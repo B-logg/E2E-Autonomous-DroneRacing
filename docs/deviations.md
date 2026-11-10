@@ -1025,3 +1025,52 @@ true z back near 0 (it was +0.52 / +0.42); (2) floor per attempt at 7j's level, 
 on every leg, and G3->G4 under 7f's 3.3% on `team`; (3) takeoff no worse than 7f's
 4.2%; (4) 3 laps against 7f on `team` (46.2%). The lateral spread is the next run's
 target, not this one's.
+
+**Run 7k's result** (`team44up`, 400 flights, seed 20000, 3 laps, paired):
+
+| | 7f 3M on `team` | 7k 1.25M | 7k 2.78M | 7k 3.0M |
+|---|---|---|---|---|
+| success | 46.2% | 27.0% | **49.8%** | 38.8% |
+| sim-only | 72.8% | 74.5% | 80.8% | 79.0% |
+| swept (first failure) | 35.5% | 60.2% | 39.0% | 47.2% |
+| floor, per attempt G3->G4 / G4->G1 | 2.2 / 2.0% | 0.8 / 0.1% | 1.2 / 0.5% | 1.4 / 1.3% |
+
+- 2.78M against 7f: +3.5 points, p = 0.33. On the 208 flights not used to pick it
+  (192-399): +0.5, p = 1.0. A tie. 3.0M is 11 points below 2.78M (p = 0.001): the
+  G2 bias (+0.14 m high) came back within 0.22M steps. Confirm a pick on flights it
+  was not picked on.
+- The floor crashes went (G4->G1 2.0 -> 0.5% per attempt). The flights they spared
+  failed at a gate instead: swept 35.5 -> 39.0%.
+
+**Where the crossing spread comes from** (7k 2.78M, every crossing traced back in the
+gate frame; 7f 3M and 7j alike):
+
+- The final lateral offset is set 0.1-0.3 s (0.5-1.3 m) out, as the turn into the gate
+  ends. The last 0.1 s is ballistic (a straight-line extrapolation from it explains
+  95-100% of the offset). The median crossing still turns: its velocity is within 10
+  degrees of the gate normal for ~0 s before the plane.
+- Speed and crossing angle raise the failure rate (the steepest third of crossings
+  fails 2-4x as often sideways) but explain 1-17% of the offset's variance.
+- Attitude does not matter: the airframe adds 0.15-0.17 m to the centre's offset at
+  every gate, and 95% of failures have the centre itself beyond 0.41 m.
+- Estimation does not explain the lateral part: the decoded position spreads as much
+  as the true one (sd 0.16-0.24 m), its error explains 0-30%, and 7j with the true
+  state spreads the same laterally (0.18-0.21 m). Vertically 7j drops to 0.10-0.13 m.
+- No run so far moved it: lateral sd 0.175-0.25 m in all nine checkpoints of 7f-7k.
+- In training the policy's action std sits at its floor (minstd 0.1; entropy -3.46 for
+  4 dims throughout), episodes last 6.7 s and 82% end at a gate.
+- A normal model of the centre's offset reproduces the per-crossing failures (G1-G4
+  3.6 / 7.8 / 4.1 / 5.1% predicted, 3.4 / 7.4 / 3.5 / 5.4% seen) and the 3-lap scores
+  (7k 45 vs 49.8%, 7j 65 vs 65.5%). By it, 80% over 3 laps needs both axes at sd <=
+  0.16 m and floor, takeoff and the rest under ~5%. One axis alone tops out near 70%.
+
+**Ablations** (`run_ablation.sh`, no training): the same checkpoint and flights with
+one source of randomness off at a time (`scripts/evaluate.py --dist-scale a,Ms,Mf,u
+--gyro-noise lo,hi --rpm-noise f`; env `dist_scale` scales Table III's eval bounds
+and leaves every draw as it was, so each pairs with the plain score).
+
+    ./run_ablation.sh 7k2.78M=<run 7k>/snapshots/step_000002779840
+
+A1 (no slow acceleration disturbance) bringing lateral sd under 0.16 m says the policy
+lacks a measure of the force (no accelerometer input); A0 (nothing at all) still at
+0.2 m says the policy itself.

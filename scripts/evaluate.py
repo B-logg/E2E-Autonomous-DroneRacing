@@ -744,6 +744,13 @@ def main() -> int:
     ap.add_argument("--erosion", type=float, default=None,
                     help="chance the 1-pixel mask erosion is on (default: the env's, 0.5); "
                          "0 shows every frame as rendered")
+    ap.add_argument("--dist-scale", default=None,
+                    help="a,Ms,Mf,u: multipliers on the eval disturbances (slow acceleration, "
+                         "slow and fast moment, fast motor command); same flights, for ablations")
+    ap.add_argument("--gyro-noise", default=None,
+                    help="lo,hi: gyro noise sigma range in rad/s (default 0.1,0.5); 0,0 = none")
+    ap.add_argument("--rpm-noise", type=float, default=None,
+                    help="RPM telemetry noise, fraction of w_max (default 0.01); 0 = none")
     args = ap.parse_args()
 
     logdir = args.logdir.expanduser()
@@ -774,7 +781,19 @@ def main() -> int:
         cfg_env = cfg_env._replace(launch=None, air_start_alt=None)
     if args.erosion is not None:
         cfg_env = cfg_env._replace(erosion_prob=float(args.erosion))
-    hw = dict(HW_FULL) if args.hw else dict(twr=None, gate_outer=None, cam_offset=None, fov=None)
+    if args.dist_scale is not None:
+        ds = tuple(float(x) for x in args.dist_scale.split(","))
+        assert len(ds) == 4, "--dist-scale takes four numbers: a,Ms,Mf,u"
+        cfg_env = cfg_env._replace(dist_scale=ds)
+    if args.gyro_noise is not None:
+        lo, hi = (float(x) for x in args.gyro_noise.split(","))
+        cfg_env = cfg_env._replace(gyro_noise_range=(lo, hi))
+    if args.rpm_noise is not None:
+        cfg_env = cfg_env._replace(rpm_noise_frac=float(args.rpm_noise))
+    if any(a is not None for a in (args.dist_scale, args.gyro_noise, args.rpm_noise)):
+        print(f"ablation: dist_scale={cfg_env.dist_scale} gyro_noise={cfg_env.gyro_noise_range} "
+              f"rpm_noise={cfg_env.rpm_noise_frac}", flush=True)
+    hw =dict(HW_FULL) if args.hw else dict(twr=None, gate_outer=None, cam_offset=None, fov=None)
     for k in hw:
         v = getattr(args, f"hw_{k}", None)
         if v is not None:

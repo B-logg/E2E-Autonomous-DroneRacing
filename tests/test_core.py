@@ -1941,3 +1941,29 @@ def test_oracle_ckpt_appends_zero_rows_to_the_first_encoder_layer_only():
     assert params["enc/mlp1/kernel"].shape == (8, 8) and params["enc/mlp0/bias"].shape == (8,)
     with pytest.raises(SystemExit):        # converting twice
         oc.widen(params, 19)
+
+
+def test_dist_scale_changes_only_the_disturbance_amplitudes():
+    """--dist-scale (scripts/evaluate.py) must fly the same flights: the airframe,
+    start and camera draws stay, only Table III's disturbance bounds scale."""
+    from skydreamer import hardware
+    from skydreamer.embodied_env import SkyDreamer
+    try:
+        cfg = SkyDreamer("hw_team44up", max_steps=100, seed=0).cfg._replace(train_fraction=0.0)
+        key = jax.random.key(20000)
+        base, _ = reset(key, cfg)
+        same, _ = reset(key, cfg._replace(dist_scale=(1.0, 1.0, 1.0, 1.0)))
+        off, _ = reset(key, cfg._replace(dist_scale=(0.0, 1.0, 0.5, 0.0)))
+    finally:
+        hardware.apply_dynamics(None)   # NOMINAL is process-global
+    for a, b in zip(jax.tree.leaves(base), jax.tree.leaves(same)):
+        if jnp.issubdtype(a.dtype, jax.dtypes.prng_key):
+            continue
+        assert np.array_equal(np.asarray(a), np.asarray(b))
+    for a, b in zip(jax.tree.leaves(base.params), jax.tree.leaves(off.params)):
+        assert np.array_equal(np.asarray(a), np.asarray(b))
+    assert np.array_equal(np.asarray(base.s.p), np.asarray(off.s.p))
+    assert np.array_equal(np.asarray(base.c_e), np.asarray(off.c_e))
+    bb, ob = np.asarray(base.bounds), np.asarray(off.bounds)
+    np.testing.assert_allclose(ob, bb * np.array([0.0, 1.0, 0.5, 0.0]), rtol=1e-6)
+    assert not np.asarray(off.eps_a).any() and np.asarray(base.eps_a).any()

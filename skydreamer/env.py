@@ -140,6 +140,10 @@ class EnvConfig(NamedTuple):
     # Chance that the 1-pixel erosion (augment.erode1) is on, drawn at reset and
     # re-drawn every ~EROSION_HOLD_STEPS.  Paper II-F: 0.5.
     erosion_prob: float = augment.EROSION_PROB
+    # Multipliers on Table III's disturbance amplitudes (eps_a slow, eps_M slow,
+    # eps_M fast, eps_u fast), for ablation evaluations only.  The draws are the
+    # same, so a scaled run flies the same flights as an unscaled one.  1 = Table III.
+    dist_scale: tuple[float, float, float, float] = (1.0, 1.0, 1.0, 1.0)
     # How the erosion thins the mask: None = section II-F's 1-pixel erosion of the
     # finished 64 x 64 mask (augment.erode1); a number = every frame edge that many
     # pixels thinner, in the renderer (track.ERODE_PX: our 0.15 m frame).
@@ -261,6 +265,9 @@ def reset(key: jax.Array, cfg: EnvConfig) -> tuple[EnvState, dict]:
         b["t_g"] = jnp.asarray(float(cfg.t_g))
     if cfg.d_g is not None:
         b["d_g"] = _mix(cfg.d_g[0], cfg.d_g[1], use_train)
+    for name, s in zip(("eps_a", "eps_M_slow", "eps_M_fast", "eps_u"), cfg.dist_scale):
+        if s != 1.0:
+            b[name] = b[name] * s
 
     params = _sample_params_mixed(k[1], use_train)
     c_e = sample_extrinsics(k[2], TRAIN)  # identical ranges in both columns
