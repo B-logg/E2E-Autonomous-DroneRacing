@@ -23,6 +23,7 @@ from skydreamer import env as SE
 from skydreamer import track as T
 
 from . import airframe as A
+from . import camera as CAM
 from . import params as P
 
 TRACKS = {
@@ -32,7 +33,6 @@ TRACKS = {
     "team44up": T.team44up_track,
 }
 
-CAM_FOV = (114.6, 92.15)   # deg, the camera the GateNet masks were trained for
 
 STAGES = {
     "c1": dict(v_cap=5.0, d_g=(0.60, 0.45), floor_penalty=False, alt_margin=False, swept=False),
@@ -50,6 +50,7 @@ class CtbaConfig(NamedTuple):
     base: SE.EnvConfig          # track, room, floor, reward switches (skydreamer's)
     stage: str
     track_name: str
+    camera: CAM.CameraSpec = CAM.DEFAULT
 
 
 def split(task: str) -> tuple[str, str]:
@@ -61,7 +62,10 @@ def split(task: str) -> tuple[str, str]:
     return stage, track
 
 
-def make_config(task: str, image_size: int = 64, max_steps: int = 2000) -> CtbaConfig:
+def make_config(task: str, image_size: int = 64, max_steps: int = 2000, camera: str | None = None) -> CtbaConfig:
+    """`camera`: a name in ctba.camera.CAMERAS; default $CTBA_CAMERA, else the full-field Pi Cam v2 mode."""
+    import os
+    spec = CAM.CAMERAS[camera or os.environ.get("CTBA_CAMERA", CAM.DEFAULT.name)]
     stage, name = split(task)
     st = STAGES[stage]
     track = TRACKS[name]()
@@ -76,7 +80,7 @@ def make_config(task: str, image_size: int = 64, max_steps: int = 2000) -> CtbaC
         image_size=image_size,
         cam_offset=A.cam_offset(),
         d_g=st["d_g"],
-        fov=CAM_FOV,
+        fov=None,                   # the policy image spans the camera's own field (ctba.camera)
         room=room,
         v_cap=v_cap,
         w_speed=T.W_SPEED * STEP_SCALE,
@@ -88,4 +92,4 @@ def make_config(task: str, image_size: int = 64, max_steps: int = 2000) -> CtbaC
         swept_points=A.footprint().astype(np.float32) if st["swept"] else None,
         w_alt=(T.W_ALT * STEP_SCALE) if st["alt_margin"] else 0.0,
     )
-    return CtbaConfig(base=base, stage=stage, track_name=name)
+    return CtbaConfig(base=base, stage=stage, track_name=name, camera=spec)

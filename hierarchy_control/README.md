@@ -29,11 +29,13 @@ FC 자이로·가속도·자세 추정 (MSP) ─┼→ 인코더/RSSM → actor 
 | `ctba/params.py` | 플랜트 명목값(출처 표기)과 에피소드별 랜덤화 범위 |
 | `ctba/plant.py` | CTBA 플랜트. 아래 표 참고 |
 | `ctba/env.py` | 경주 환경. 트랙, 보상, 종료, 바닥 이륙, 마스크 렌더링은 skydreamer 것 |
+| `ctba/camera.py` | Pi Camera v2(IMX219) 모드별 화각, 틸트, 프레임레이트, 정책 영상의 핀홀 K, 마스크 렌더링 |
 | `ctba/airframe.py` | CAD 외곽점(프롭, 암, 셸, 받침대, 카메라), 무게중심, 카메라 위치 |
 | `ctba/tasks.py` | 과제 이름(`c1_team44up` 등) → 환경 설정, 커리큘럼 단계 정의 |
 | `ctba/expert.py` | CTBA 데모 제어기 (경로 추종 → throttle + 목표각 + yaw rate) |
 | `ctba/embodied.py` | DreamerV3 어댑터 (suite `ctba`) |
 | `scripts/` | DreamerV3 등록, 데모 수집, 커리큘럼 학습, 평가 |
+| `scripts/camera_visibility.py`, `camera_views.py` | 카메라 모드별 게이트 가시성 비교와 화면 렌더 (`drone_geometry/camera_views.png`) |
 | `tests/` | 플랜트를 실제 로그로 재현하는 검증, 환경 검증 |
 
 `ctba/plant.py`가 모델링하는 것:
@@ -53,7 +55,7 @@ FC 자이로·가속도·자세 추정 (MSP) ─┼→ 인코더/RSSM → actor 
 
 | 키 | 내용 |
 |---|---|
-| `mask` | 64×64 게이트 마스크, 20–50 ms 지연 |
+| `mask` | 64×64 게이트 마스크. 카메라는 Pi Camera v2(IMX219) 1640×1232 모드, 64×64가 화각 62.2°×48.8° 전체를 덮음(`ctba/camera.py`). 틸트 40°(학습 35–45°). 25–30 fps(새 프레임 전에는 직전 마스크 유지). 20–50 ms 지연 |
 | `rates` | 자이로 rad/s (IMU 좌표). 1 °/s 양자화, 노이즈 1–4 °/s |
 | `acc` | 비추력. g 단위, 호버 시 (0, 0, −1). 25 Hz 필터, 노이즈 0.02–0.1 g, 바이어스 ±0.02 g |
 | `att` | **FC의 자세 추정** roll, pitch rad (MSP_ATTITUDE, 0.1° 단위). FC가 "지금 몇 도라고 믿는지" |
@@ -62,7 +64,7 @@ FC 자이로·가속도·자세 추정 (MSP) ─┼→ 인코더/RSSM → actor 
 - **디코더 대상(학습 때만):**
   - 위치, 속도, 실제 자세, 실제 rate, 실제 추력
   - **FC 추정 오차(roll, pitch)**
-  - 플랜트 파라미터 30개, 지연 2개
+  - 플랜트 파라미터 30개, 지연·카메라 프레임레이트 3개
   - 월드 모델은 이 대상으로 "FC가 얼마나 틀려 있는지"를 추론하도록 학습합니다.
 - **명령 지연:** 1–2 스텝(10–20 ms), 에피소드마다 새로 뽑습니다.
 
@@ -140,7 +142,10 @@ skydreamer 저장소 안의 `hierarchy_control/`에서 실행합니다. skydream
    - MSP_RAW_IMU 자이로(정수 °/s)와 가속도(512 LSB/g)를 FRD로 바꿉니다. 보드 좌표 (x, y, z) → (x, −y, −z)입니다.
    - MSP_ATTITUDE roll은 그대로 쓰고, pitch는 부호를 뒤집습니다.
    - 확인 방법: 평평하게 두면 `acc` = (0, 0, −1), `att` = (0, 0) 근처여야 합니다.
-5. **첫 정책 비행은 테더 비행으로 합니다.** 그 전에 프롭을 빼고 벤치에서 명령 부호, override 스위치, failsafe를 확인합니다.
+5. **카메라:** Pi Camera v2를 **1640×1232 @ 30 fps** 모드로 받습니다. 왜곡을 보정한 영상을 `ctba.camera.policy_K()`의 64×64 핀홀로 리사이즈한 뒤 GateNet 마스크를 씁니다. skydreamer의 공칭 K(104°)가 아닙니다.
+   - 틸트는 40°입니다.
+   - 카메라 캘리브레이션(체커보드)으로 실제 화각을 확인해야 합니다.
+6. **첫 정책 비행은 테더 비행으로 합니다.** 그 전에 프롭을 빼고 벤치에서 명령 부호, override 스위치, failsafe를 확인합니다.
 
 ## 검증 결과 (로컬, 2026-11-16)
 

@@ -25,9 +25,10 @@ import jax.numpy as jnp
 from skydreamer import augment, track as trk
 from skydreamer import env as SE
 from skydreamer.dynamics import euler_to_quat, quat_to_euler, quat_to_matrix
-from skydreamer.params import TRAIN as SD_TRAIN, EVAL as SD_EVAL, sample_extrinsics
+from skydreamer.params import TRAIN as SD_TRAIN, EVAL as SD_EVAL
 
 from . import params as P
+from . import camera as CAM
 from . import plant
 from .tasks import CtbaConfig
 
@@ -49,6 +50,8 @@ class EnvState(NamedTuple):
     acc_bias: jax.Array      # (3,) g
     act_delay: jax.Array     # int32, control steps
     img_delay: jax.Array     # int32, control steps
+    cam_period: jax.Array    # control steps between camera frames (100 / fps)
+    cam_phase: jax.Array     # control steps since the last frame
     c_e: jax.Array
     d_g: jax.Array
     t_g: jax.Array
@@ -105,10 +108,14 @@ def reset(key: jax.Array, ccfg: CtbaConfig):
     d_g = _mix(cfg.d_g[0], cfg.d_g[1], use_train)
     t_g = jnp.asarray(cfg.t_g if cfg.t_g is not None else SD_TRAIN.t_g, jnp.float32)
     params = P.sample(k[1])
-    c_e = sample_extrinsics(k[2], SD_TRAIN)
+    c_e = CAM.sample_extrinsics(k[2], ccfg.camera)
     acc_bias = jax.random.uniform(k[3], (3,), minval=-P.ACC_BIAS, maxval=P.ACC_BIAS)
     act_delay = jax.random.randint(k[4], (), P.ACTION_DELAY[0], P.ACTION_DELAY[1] + 1)
     img_delay = jax.random.randint(k[5], (), P.IMAGE_DELAY[0], P.IMAGE_DELAY[1] + 1)
+    kc = jax.random.split(k[15])
+    fps = jax.random.uniform(kc[0], minval=ccfg.camera.fps[0], maxval=ccfg.camera.fps[1])
+    cam_period = P.CONTROL_FREQ / fps
+    cam_phase = jax.random.uniform(kc[1], maxval=cam_period)
 
     n = cfg.track.n_gates
     start_gate = jnp.where(use_train, jax.random.randint(k[6], (), 0, n), 0)
@@ -171,6 +178,7 @@ def reset(key: jax.Array, ccfg: CtbaConfig):
 
     state = EnvState(
         key=k[9], s=s, params=params, acc_bias=acc_bias, act_delay=act_delay, img_delay=img_delay,
+        cam_period=cam_period, cam_phase=cam_phase,
         c_e=c_e, d_g=d_g, t_g=t_g, eps_a_amp=eps_a_amp,
         eps_a=jax.random.uniform(k[10], (3,), minval=-eps_a_amp, maxval=eps_a_amp),
         eps_m_slow=jax.random.uniform(k[11], (3,), minval=-EPS_M_SLOW, maxval=EPS_M_SLOW),
@@ -185,7 +193,7 @@ def reset(key: jax.Array, ccfg: CtbaConfig):
         term_cause=jnp.array(0, jnp.int32), grounded=launch, airborne=~launch,
         alt_ok=jnp.array(False), approached=jnp.array(False),
     )
-    mask = SE._render_augmented(state, cfg)
+    mask = CAM.render_augmented(state, cfg, ccfg.camera)
     state = state._replace(mask_buf=jnp.broadcast_to(mask, state.mask_buf.shape))
     return state, observe(state, ccfg)
 
@@ -200,7 +208,9 @@ def observe(state: EnvState, ccfg: CtbaConfig) -> dict:
     euler = quat_to_euler(state.s.q)
     idx = P.IMAGE_DELAY_MAX - state.img_delay          # img_delay steps old
     mask = state.mask_buf[idx]
+    fps = P.CONTROL_FREQ / state.cam_period
     delays = jnp.stack([
+        (fps - ccfg.camera.fps[0]) / max(ccfg.camera.fps[1] - ccfg.camera.fps[0], 1e-6),
         (state.act_delay - P.ACTION_DELAY[0]) / max(P.ACTION_DELAY[1] - P.ACTION_DELAY[0], 1),
         (state.img_delay - P.IMAGE_DELAY[0]) / max(P.IMAGE_DELAY[1] - P.IMAGE_DELAY[0], 1),
     ]).astype(jnp.float32) * 2.0 - 1.0
@@ -242,7 +252,7 @@ OBS_DIMS = {
     "rates": 3, "acc": 3, "att": 2, "flight_plan": trk.FLIGHT_PLAN_DIM,
     "info_p_w": 3, "info_p_g": 3, "info_v_w": 3, "info_v_g": 3, "info_att": 4, "info_rates": 3,
     "info_att_err": 2,
-    "info_thrust": 1, "info_acc": 3, "info_cam": 3, "info_dyn": N_DYN, "info_delay": 2,
+    "info_thrust": 1, "info_acc": 3, "info_cam": 3, "info_dyn": N_DYN, "info_delay": 3,
     "info_meas_rates": 3, "info_meas_acc": 3, "info_meas_att": 2,
     "info_flight_plan": trk.FLIGHT_PLAN_DIM,
 }
@@ -352,8 +362,12 @@ def step(state: EnvState, action: jax.Array, ccfg: CtbaConfig):
         step_count=state.step_count + 1, done=terminal, action_buf=action_buf,
         term_cause=term_cause, grounded=grounded, airborne=airborne, alt_ok=alt_ok)
 
-    mask = SE._render_augmented(new, cfg)
-    new = new._replace(mask_buf=jnp.concatenate([new.mask_buf[1:], mask[None]], 0))
+    # a new camera frame only every cam_period steps; otherwise the last one again
+    phase = state.cam_phase + 1.0
+    fresh = phase >= state.cam_period
+    phase = jnp.where(fresh, phase - state.cam_period, phase)
+    mask = jnp.where(fresh, CAM.render_augmented(new, cfg, ccfg.camera), new.mask_buf[-1])
+    new = new._replace(mask_buf=jnp.concatenate([new.mask_buf[1:], mask[None]], 0), cam_phase=phase)
     truncated = new.step_count >= cfg.max_steps
     return new, observe(new, ccfg), reward, terminal, truncated
 

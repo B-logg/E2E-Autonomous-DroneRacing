@@ -139,3 +139,36 @@ def test_demonstrations_fly_the_track(cfg):
     g, cause = np.asarray(g), np.asarray(cause)
     print("expert: gates", g, "causes", np.bincount(cause, minlength=5))
     assert np.mean((g >= 8) & (cause == 0)) > 0.4
+
+
+def test_camera_frame_rate(cfg):
+    """A new mask only arrives at the camera rate: over 60 steps of flight the
+    newest buffered frame changes at most 60 / period + 1 times, and at least once."""
+    st, _ = E.reset(jax.random.key(5), cfg)
+    period = float(st.cam_period)
+    lo, hi = cfg.camera.fps
+    assert 100 / hi - 1e-4 <= period <= 100 / lo + 1e-4
+    a = jnp.array([-0.3, 0.2, 0.1, 0.3])
+    changes, last = 0, np.asarray(st.mask_buf[-1])
+    for _ in range(60):
+        st, *_ = E.step(st, a, cfg)
+        cur = np.asarray(st.mask_buf[-1])
+        changes += int(not np.array_equal(cur, last))
+        last = cur
+    assert changes <= 60 / period + 1, (changes, period)
+    assert changes >= 1
+
+
+def test_camera_field_and_launch_view(cfg):
+    """The policy image spans the Pi Cam v2 full field (62.2 x 48.8 deg) at the 40 deg mount,
+    and from the floor launch the start gate is in view."""
+    from ctba import camera as CAM
+    spec = cfg.camera
+    assert spec.name == "picam_v2_1640x1232" and spec.tilt_deg == 40.0
+    rays = np.asarray(CAM.pixel_rays(spec, 64, 64))
+    h_edge = np.degrees(np.arctan(np.abs(rays[..., 1]).max()))
+    v_edge = np.degrees(np.arctan(np.abs(rays[..., 2]).max()))
+    assert abs(2 * h_edge - 62.2) < 2.0 and abs(2 * v_edge - 48.8) < 2.0, (h_edge, v_edge)
+    c = cfg._replace(base=cfg.base._replace(train_fraction=0.0))
+    st, o = E.reset(jax.random.key(2), c)
+    assert float(np.asarray(st.mask_buf[-1]).mean()) > 0.02

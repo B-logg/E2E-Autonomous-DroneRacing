@@ -100,6 +100,9 @@ EST_INIT_ERR = 2.0 * DEG      # mid-air starts: FC estimate off by up to this pe
 # Delays, in control steps (10 ms)
 ACTION_DELAY = (1, 2)          # Jetson -> MSP -> Betaflight RC path [EST]
 IMAGE_DELAY = (2, 5)           # exposure -> GateNet mask [EST]; SkyDreamer: 33 ms
+
+# Camera (field, tilt, frame rate): ctba.camera.  A new mask arrives at the camera / GateNet
+# frame rate, not every 10 ms control step; between frames the policy sees the last one again.
 ACTION_DELAY_MAX = ACTION_DELAY[1]
 IMAGE_DELAY_MAX = IMAGE_DELAY[1]
 
