@@ -1,0 +1,13 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ctba"
+version = "0.1.0"
+description = "DreamerV3 racing policy with CTBA outputs over Betaflight ANGLE mode"
+requires-python = ">=3.10"
+dependencies = []   # runs inside skydreamer's environment (jax, dreamerv3)
+
+[tool.setuptools]
+packages = ["ctba"]

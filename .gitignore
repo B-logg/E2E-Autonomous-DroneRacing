@@ -20,3 +20,14 @@ expert_video_*/
 # ./run_compare.sh results (checkpoint copies included)
 compare/
 eval_7g/
+
+# CTBA hierarchy (hierarchy_control/): raw flight logs and their caches stay local
+hierarchy_control/manual_flight_logs/
+hierarchy_control/sysid/cache/
+hierarchy_control/logdir/
+hierarchy_control/demos*/
+# airframe: CAD exports and full-resolution photos stay local
+drone_geometry/*.step
+drone_geometry/*.zip
+drone_geometry/drone_image/
+.DS_Store
