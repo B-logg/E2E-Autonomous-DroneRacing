@@ -54,7 +54,21 @@ def main() -> int:
     ap.add_argument("--episodes", type=int, default=64)
     ap.add_argument("--speed", type=float, default=2.5)
     ap.add_argument("--out", type=pathlib.Path, default=None)
+    ap.add_argument("--compare-tilts", action="store_true",
+                    help="IMX219 full field and IMX708 (comparison only) at 20/30/40 deg instead of the mode list")
+    ap.add_argument("--fov", type=float, nargs=2, default=None, metavar=("H", "V"),
+                    help="one lens (deg) at each of --tilts instead of the mode list")
+    ap.add_argument("--tilts", type=float, nargs="+", default=[30.0, 35.0, 40.0])
     args = ap.parse_args()
+    cams = CAMERAS
+    if args.fov:
+        cams = [(f"{args.fov[0]:g}x{args.fov[1]:g} tilt {t:g}", args.fov[0], args.fov[1], t) for t in args.tilts]
+    if args.compare_tilts:
+        cams = [CAMERAS[0]] + [(f"{n} tilt {t}", h, v, float(t)) for n, h, v in (
+            ("IMX219 1640x1232@30 62.2x48.8", 62.2, 48.8),
+            ("IMX708 std 2304x1296 66x41   ", 66.0, 41.0),
+            ("IMX708 wide 2304x1296 102x67 ", 102.0, 67.0),
+            ("IMX708 wide 1536x864 78.9x47.6", 78.9, 47.6)) for t in (20, 30, 40)]
 
     import jax
     import jax.numpy as jnp
@@ -90,7 +104,7 @@ def main() -> int:
     m = o["live"] & o["air"]
     cam_off = airframe.cam_offset()
     res = {}
-    for name, hf, vf, tilt in CAMERAS:
+    for name, hf, vf, tilt in cams:
         t = np.radians(tilt)
         # camera axes in body FRD: forward tilted up, right = body y, down
         fwd = np.array([np.cos(t), 0.0, -np.sin(t)])

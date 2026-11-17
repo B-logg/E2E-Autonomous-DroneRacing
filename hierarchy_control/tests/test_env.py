@@ -160,11 +160,11 @@ def test_camera_frame_rate(cfg):
 
 
 def test_camera_field_and_launch_view(cfg):
-    """The policy image spans the Pi Cam v2 full field (62.2 x 48.8 deg) at the 40 deg mount,
+    """The policy image spans the Pi Cam v2 full field (62.2 x 48.8 deg) at the 30 deg mount,
     and from the floor launch the start gate is in view."""
     from ctba import camera as CAM
     spec = cfg.camera
-    assert spec.name == "picam_v2_1640x1232" and spec.tilt_deg == 40.0
+    assert spec.name == "picam_v2_1640x1232" and spec.tilt_deg == 30.0
     rays = np.asarray(CAM.pixel_rays(spec, 64, 64))
     h_edge = np.degrees(np.arctan(np.abs(rays[..., 1]).max()))
     v_edge = np.degrees(np.arctan(np.abs(rays[..., 2]).max()))

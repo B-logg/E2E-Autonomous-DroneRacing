@@ -1,5 +1,5 @@
 """Our camera: Raspberry Pi Camera Module v2 (Sony IMX219, standard 3.04 mm lens) on the
-Jetson's CSI port, tilted 40 deg up, fixed.
+Jetson's CSI port, mounted 30 deg up (changed from the CAD's 40 deg, 2026-11-17).
 
 SkyDreamer renders every mask on the paper's nominal pinhole (focal 25/64 of the
 width, a ~104 deg square) and remaps real images onto it.  Our lens sees far less
@@ -15,7 +15,11 @@ IMX219 modes on the Jetson (fields from the 3.04 mm focal length, 1.12 um pixels
   1280x720  @ 60 fps  2560x1440 centre crop, binned   50.5 x 29.7 deg
 At 40 deg tilt the cropped mode sees the gate being flown 8% of the time on the demo
 flights, the full-field mode 31% (scripts/camera_visibility.py), so the full-field
-mode is the default.
+mode is the default.  Tilt, full-field mode, gate centre in view on demo flights:
+    tilt        25    30    35    40 deg
+    2.5 m/s     50%   48%   42%   31%
+    4.0 m/s     40%   41%   41%   36%
+30 deg is best or tied at both speeds; trained 25-35 deg.
 """
 from __future__ import annotations
 
@@ -44,8 +48,8 @@ class CameraSpec(NamedTuple):
     roll_yaw_range: float = 5.0   # +- deg, mounting roll / yaw (SkyDreamer Table III)
 
 
-PICAM_V2_FULL = CameraSpec("picam_v2_1640x1232", 62.2, 48.8, (25.0, 30.0), 40.0, (35.0, 45.0))
-PICAM_V2_720P = CameraSpec("picam_v2_1280x720", 50.5, 29.7, (50.0, 60.0), 40.0, (35.0, 45.0))
+PICAM_V2_FULL = CameraSpec("picam_v2_1640x1232", 62.2, 48.8, (25.0, 30.0), 30.0, (25.0, 35.0))
+PICAM_V2_720P = CameraSpec("picam_v2_1280x720", 50.5, 29.7, (50.0, 60.0), 30.0, (25.0, 35.0))
 CAMERAS = {c.name: c for c in (PICAM_V2_FULL, PICAM_V2_720P)}
 DEFAULT = PICAM_V2_FULL
 

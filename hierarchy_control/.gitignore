@@ -3,3 +3,5 @@ __pycache__/
 sysid/cache/
 logdir/
 demos*/
+jetson_bench/onnx/
+jetson_bench/results/

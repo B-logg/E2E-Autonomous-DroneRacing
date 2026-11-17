@@ -15,7 +15,7 @@ COM = (0.01, 0.05, 1.15)          # cm, user frame (z depends on an unmeasured n
 MOTOR_X, MOTOR_Y = 15.66 / 2, 19.75 / 2   # cm, CAD motor holes
 PROP_R = 6.35                     # cm, 5 in
 CAM = (11.73, 0.12, 1.16)         # cm, lens front
-CAM_TILT_DEG = 40.0               # up from horizontal, fixed mount (training randomizes 35-45, ctba.camera)
+CAM_TILT_DEG = 30.0               # up from horizontal, fixed mount (CAD 40 -> remounted 30; training 25-35, ctba.camera)
 
 # CAD cross-sections (drone_geometry.py): x stations, bottom and top z, half width.
 XS = [13.56, 12.5, 11, 9, 7, 4, 1, -1, -4, -7, -10, -13, -15, -16.01]
