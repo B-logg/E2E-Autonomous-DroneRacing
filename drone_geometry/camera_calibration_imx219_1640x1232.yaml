@@ -1,0 +1,11 @@
+camera:
+  calibration:
+    image_width: 1640
+    image_height: 1232
+    camera_matrix:
+      data: [1273.3266511243637, 0.0, 811.702595942095, 0.0, 1278.9616996348316, 622.3537615262588, 0.0, 0.0, 1.0]
+    distortion_coefficients:
+      data: [0.19655397504079378, -0.4508687371302651, 0.0011251911744715893, 0.0018001195099642496, 0.2740675028936204]
+    model: radtan (OpenCV k1 k2 p1 p2 k3), Jetson nvarguscamerasrc 1640x1232 mode
+    images: 18
+    rms_px: 0.781

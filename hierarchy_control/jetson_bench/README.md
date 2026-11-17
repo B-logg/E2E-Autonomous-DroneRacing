@@ -55,20 +55,31 @@ sudo usermod -aG dialout $USER        # 처음 한 번, 그다음 로그아웃 �
 ## 3. 실행
 
 ```bash
+# (최종) 확정 설정(GateNet f4 240×320, 예비 480×640)만 측정 + FC 통신 (약 10분)
+#   먼저: sudo nvpmodel -m 0 && sudo jetson_clocks
+./run.sh --quick --duration 15 --uart /dev/ttyTHS1 --baud 500000
+
 # (A) 전부 한 번에: GPU/CPU 측정 + FC 통신 (30–60분)
-./run.sh --uart /dev/ttyTHS1 --baud 115200
+./run.sh --uart /dev/ttyTHS1 --baud 500000
 
 # (B) 빠른 확인 (10–15분)
-./run.sh --quick --uart /dev/ttyTHS1 --baud 115200
+./run.sh --quick --uart /dev/ttyTHS1 --baud 500000
 
-# (C) FC 통신만 다른 baud로 한 번 더 (FC Ports 탭 baud를 921600으로 바꾸고 재부팅한 뒤, 약 1분)
-./run.sh --only-uart --uart /dev/ttyTHS1 --baud 921600
+# (C) FC 통신만 (약 1분 30초)
+./run.sh --only-uart --uart /dev/ttyTHS1 --baud 500000
 
 # FC 없이 GPU/CPU만
 ./run.sh
 ```
 
-**권장 순서:** (A)를 115200으로 한 번 → FC baud를 921600으로 바꾸고 (C)를 한 번. 이렇게 두 번 하면 됩니다.
+**FC 설정 (먼저 한 번):** Betaflight CLI에서 `set serial_update_rate_hz = 2000` → `save`.
+기본값 100이면 FC가 MSP 명령을 10 ms에 하나만 처리해서 사이클당 3개(IMU, 자세, RC)가 30 ms 걸립니다.
+GPU 측정 전에는 `sudo nvpmodel -m 0` (MAXN SUPER)과 `sudo jetson_clocks`를 켜 주세요.
+
+**FC 통신 결과 읽는 법:** 실제 비행에 쓸 방식은 `sequential_100hz`(요청 하나 보내고 응답 받고 다음)입니다.
+- `missed 0, timeouts 0`, cycle p99가 몇 ms면 정상
+- 각 테스트 뒤의 `FC answers MSP after this test`가 `NO`면, 그 테스트에서 FC가 MSP 응답을 멈춘 것입니다.
+  그때는 FC LED와 Configurator 연결 상태(재부팅/부트로더 진입 여부)를 확인하고, 전원을 다시 넣어야 살아나는지 적어 주세요.
 
 ## 4. 결과 보내기
 
@@ -77,6 +88,20 @@ sudo usermod -aG dialout $USER        # 처음 한 번, 그다음 로그아웃 �
 results/<호스트>-<시각>.tar.gz
 ```
 화면 마지막에 요약이 나오고, 같은 내용이 `summary.txt`에 저장됩니다. 중간에 Ctrl+C로 멈춰도, 한 항목이 실패해도 나머지 결과는 저장됩니다.
+
+## 5. 카메라 지연 (C4): `camera_latency.py`
+
+Jetson이 직접 켠 LED가 카메라 화면에 처음 보이기까지의 시간을 100번 잽니다. 배포와 같은 경로(1640×1232@30 → 하드웨어 축소 320×240)로 받습니다.
+
+배선: 40핀 **15번 핀 → 330 Ω 저항 → LED 긴 다리(+)**, **LED 짧은 다리(−) → 6번 핀(GND)**. LED를 렌즈 앞 3–10 cm, 화면 가운데에 둡니다. 실내는 조금 어둡게 합니다.
+
+```bash
+sudo python3 camera_latency.py --led 15 --blink        # 배선 확인: LED가 1초 간격으로 10번 깜박이면 OK
+sudo python3 camera_latency.py --led 15                # 자동 노출 (약 1분)
+sudo python3 camera_latency.py --led 15 --exposure-us 4000   # 노출 4 ms 고정
+```
+결과: `results/camera-<호스트>-<시각>/summary.txt`. 마지막 줄 `camera delay ... = X ms`가 필요한 값입니다.
+LED가 없으면 모니터를 Jetson에 연결하고 `python3 camera_latency.py --screen`을 쓰되, 모니터 자체 지연이 더해진 **상한값**입니다.
 
 ## 문제 해결
 

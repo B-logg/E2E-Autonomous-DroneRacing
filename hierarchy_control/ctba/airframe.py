@@ -1,6 +1,6 @@
 """Our airframe's geometry for collision and gate scoring, from the team's CAD
-(drone_geometry/Part Studio 1-2.step via drone_geometry.py) and the hanging-photo
-centre of mass.
+(drone_geometry/drone_design_tilt30.step, 2026-11-18, via drone_geometry.py) and the
+hanging-photo centre of mass.
 
 CAD/user frame: x forward, y right, z UP, cm, origin at the motor-diagonal centre
 in the prop plane.  Returned points are in the simulator's body frame: FRD
@@ -14,17 +14,18 @@ MASS = 0.95                       # kg, all-up (hardware_spec.md)
 COM = (0.01, 0.05, 1.15)          # cm, user frame (z depends on an unmeasured nut height)
 MOTOR_X, MOTOR_Y = 15.66 / 2, 19.75 / 2   # cm, CAD motor holes
 PROP_R = 6.35                     # cm, 5 in
-CAM = (11.73, 0.12, 1.16)         # cm, lens front
-CAM_TILT_DEG = 30.0               # up from horizontal, fixed mount (CAD 40 -> remounted 30; training 25-35, ctba.camera)
+CAM = (12.00, 0.12, 0.93)         # cm, lens front face (CAD drone_design_tilt30.step)
+CAM_TILT_DEG = 30.0               # up from horizontal, fixed mount (CAD 30.0; training 25-35, ctba.camera)
 
-# CAD cross-sections (drone_geometry.py): x stations, bottom and top z, half width.
-XS = [13.56, 12.5, 11, 9, 7, 4, 1, -1, -4, -7, -10, -13, -15, -16.01]
-BOT = [-0.54, -1.95, -2.73, -2.32, -1.73, -1.73, -1.73, -1.73, -1.73, -1.73, -1.73, -0.52, -0.24, -0.12]
-TOP = [-0.54, 0.80, 2.08, 3.41, 4.14, 5.23, 5.61, 5.69, 5.10, 4.02, 2.93, 1.85, 1.13, 0.40]
-HALFW = [0.3, 1.99, 2.95, 3.30, 3.50, 3.80, 3.91, 3.71, 3.42, 3.12, 2.77, 2.10, 1.22, 0.0]
-STAND_X = (8.0, -8.2)             # cm, front / rear stand centres
+# CAD cross-sections (drone_geometry.py): x stations, bottom and top z, half width
+# (shell, mounts, lid, Jetson housing, camera cover and legs; the frame plate excluded).
+XS = [13.56, 12.5, 11.0, 9.0, 7.0, 5.0, 3.0, 1.0, -1.0, -3.0, -5.0, -7.0, -9.0, -11.0, -13.0, -15.0, -16.01]
+BOT = [-0.56, -1.95, -2.73, -3.04, -1.73, -1.73, -1.73, -1.73, -1.73, -1.73, -1.73, -1.73, -3.23, -0.41, -0.24, -0.12, 0.32]
+TOP = [-0.52, 0.84, 2.08, 3.41, 4.14, 4.86, 5.59, 5.61, 5.69, 5.39, 4.74, 4.02, 3.30, 2.57, 1.85, 1.13, 0.47]
+HALFW = [0.06, 1.99, 2.95, 3.30, 5.32, 5.68, 3.90, 3.91, 3.71, 3.52, 3.32, 3.12, 2.92, 2.59, 2.10, 1.22, 0.03]
+STAND_X = (8.04, -8.16)           # cm, front / rear floor-contact centres (CAD)
 STAND_Y = 4.0
-STAND_Z = -4.0                    # stand bottoms (floor contact)
+STAND_Z = -4.3                    # stand bottoms (floor contact); legs 3 mm longer than Part Studio 1-2
 
 
 def _to_body(pts_cm: np.ndarray) -> np.ndarray:

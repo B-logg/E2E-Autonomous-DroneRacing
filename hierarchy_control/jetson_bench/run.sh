@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Jetson benchmark:  ./run.sh            full GPU/CPU tests (about 30-60 min, mostly TensorRT engine builds)
-#                    ./run.sh --quick    fewer GateNet sizes, shorter runs (about 10-15 min)
-#                    add --uart /dev/ttyTHS1 --baud 115200 for the FC link, or --only-uart for just that
+#                    ./run.sh --quick    only the chosen GateNet (f4 240x320) + fallback 480x640
+#                    add --uart /dev/ttyTHS1 --baud 500000 for the FC link, or --only-uart for just that
 # Results: results/<host>-<time>/ and the same folder packed as results/<host>-<time>.tar.gz
 set -euo pipefail
 cd "$(dirname "$0")"

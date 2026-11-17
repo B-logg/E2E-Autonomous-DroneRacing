@@ -98,8 +98,15 @@ MOUNT_TILT = 1.5 * DEG        # IMU vs airframe, roll/pitch [LOG9 at rest: -0.9 
 EST_INIT_ERR = 2.0 * DEG      # mid-air starts: FC estimate off by up to this per axis
 
 # Delays, in control steps (10 ms)
-ACTION_DELAY = (1, 2)          # Jetson -> MSP -> Betaflight RC path [EST]
-IMAGE_DELAY = (2, 5)           # exposure -> GateNet mask [EST]; SkyDreamer: 33 ms
+# Measured on the Orin Nano 2026-11-17 (jetson_bench, 15 W, clocks locked):
+#   policy FP16 with GateNet running 0.8 ms median / 3.4 ms p99; MSP read+write 1.8 / 2.3 ms
+#   -> the Jetson side finishes inside one step; the rest is Betaflight's RC handling.
+ACTION_DELAY = (1, 2)          # Jetson -> MSP -> Betaflight RC path [MEAS Jetson side, FC side EST]
+#   camera, LED test (100 trials each, 0 misses): exposure midpoint at the image centre ->
+#     frame in the program 42 ms (4 ms exposure) / 47 ms (auto); includes ISP resize to 320x240
+#   + undistort ~0.5 + GateNet f4 240x320 3.2 ms (p99 6.8) + wait for the next policy step 0-10
+#   = 46-65 ms, i.e. 5-6 steps; +-1 step margin.  (SkyDreamer: 33 ms.)
+IMAGE_DELAY = (4, 7)           # scene instant -> mask the policy uses [MEAS]
 
 # Camera (field, tilt, frame rate): ctba.camera.  A new mask arrives at the camera / GateNet
 # frame rate, not every 10 ms control step; between frames the policy sees the last one again.

@@ -42,14 +42,14 @@ HERE = Path(__file__).resolve().parent
 ONNX = HERE / "onnx"
 sys.path.insert(0, str(HERE))
 
-LAT_RE = re.compile(r"Latency: min = ([\d.]+) ms, max = ([\d.]+) ms, mean = ([\d.]+) ms, median = ([\d.]+) ms, "
+LAT_RE = re.compile(r"\] Latency: min = ([\d.]+) ms, max = ([\d.]+) ms, mean = ([\d.]+) ms, median = ([\d.]+) ms, "
                     r"percentile\(90%\) = ([\d.]+) ms, percentile\(95%\) = ([\d.]+) ms, percentile\(99%\) = ([\d.]+) ms")
 GPU_RE = re.compile(r"GPU Compute Time: min = ([\d.]+) ms, max = ([\d.]+) ms, mean = ([\d.]+) ms, median = ([\d.]+) ms, "
                     r"percentile\(90%\) = ([\d.]+) ms, percentile\(95%\) = ([\d.]+) ms, percentile\(99%\) = ([\d.]+) ms")
 QPS_RE = re.compile(r"Throughput: ([\d.]+) qps")
 KEYS = ("min", "max", "mean", "median", "p90", "p95", "p99")
 
-QUICK_GATENET = [(4, 256, 448), (2, 256, 448), (4, 352, 640)]
+QUICK_GATENET = [(4, 240, 320), (4, 480, 640)]     # chosen GateNet (2026-11-17) and its fallback
 
 
 # ---------------------------------------------------------------------------------- utils
@@ -353,11 +353,10 @@ def cv_section(run: Run, duration):
         run.log(f"OpenCV not available ({type(e).__name__}): skipped"); return
     out = run.results.setdefault("opencv", {})
     run.log("== OpenCV CPU: camera frame -> resize -> undistort remap ==")
-    cams = {"imx219_1640x1232": (1232, 1640), "imx219_1280x720": (720, 1280),
-            "imx708_2304x1296": (1296, 2304), "imx708_4608x2592": (2592, 4608)}
+    cams = {"imx219_1640x1232": (1232, 1640)}              # the chosen camera mode
     for cam, (H, W) in cams.items():
         frame = (np.random.rand(H, W, 3) * 255).astype(np.uint8)
-        for (h, w) in ((256, 448), (352, 640)):
+        for (h, w) in ((240, 320), (480, 640)):
             mx = np.tile(np.linspace(0, w - 1, w, dtype=np.float32), (h, 1))
             my = np.tile(np.linspace(0, h - 1, h, dtype=np.float32)[:, None], (1, w))
             ts, end = [], time.time() + min(duration, 5)
@@ -407,16 +406,28 @@ def uart_section(run: Run, dev, baud, seconds):
             out[key] = dict(cycles=r["cycles"], achieved_hz=r["achieved_hz"], cycle_ms=cyc, rtt_ms=rtt,
                             timeouts=r["timeouts"], errors=r["errors"], missed_deadlines=r["missed_deadlines"],
                             late_frames=r["late_frames"],
+                            failed_cycles=len(r["fail_at_s"]),
+                            first_fail_s=r["fail_at_s"][0] if r["fail_at_s"] else None,
+                            last_fail_s=r["fail_at_s"][-1] if r["fail_at_s"] else None,
+                            fc_alive_after=U.alive(ser),
                             tx_bytes_per_s=r["tx_bytes"] / r["seconds"], rx_bytes_per_s=r["rx_bytes"] / r["seconds"])
             run.save()
             run.log(f"{key:30s} cycle {fmt(cyc)} | {r['achieved_hz']:.0f} Hz, missed {r['missed_deadlines']}, "
                     f"timeouts {r['timeouts']}, late frames {r['late_frames']}, bad frames {r['errors']}")
             for name, s in rtt.items():
                 run.log(f"{'':32s}{name:14s} round trip {fmt(s)}")
+            o = out[key]
+            if o["failed_cycles"]:
+                run.log(f"{'':32s}cycles with a timeout: {o['failed_cycles']}/{r['cycles']}, "
+                        f"first at {o['first_fail_s']:.2f} s, last at {o['last_fail_s']:.2f} s")
+            run.log(f"{'':32s}FC answers MSP after this test: {'yes' if o['fc_alive_after'] else 'NO (FC stopped answering)'}")
+            run.save()
 
         U_NAMES = {U.MSP_RAW_IMU: "RAW_IMU", U.MSP_ATTITUDE: "ATTITUDE", U.MSP_SET_RAW_RC: "SET_RAW_RC"}
         report("sequential_100hz", U.run_cycles(ser, seconds, 100.0, pipelined=False))
         report("pipelined_100hz", U.run_cycles(ser, seconds, 100.0, pipelined=True))
+        report("sequential_after_pipelined", U.run_cycles(ser, 5.0, 100.0, pipelined=False))
+        report("sequential_max_rate", U.run_cycles(ser, 5.0, 0.0, pipelined=False))
         report("pipelined_max_rate", U.run_cycles(ser, min(seconds, 5.0), 0.0, pipelined=True, timeout=0.05))
 
         # the same while GateNet keeps the GPU busy (CPU/IRQ contention on the Jetson)
@@ -426,7 +437,7 @@ def uart_section(run: Run, dev, baud, seconds):
             bg = subprocess.Popen([run.results["system"]["trtexec"], f"--loadEngine={eng}",
                                    f"--duration={seconds + 4:g}"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             time.sleep(2)
-            report("pipelined_100hz_gpu_busy", U.run_cycles(ser, seconds, 100.0, pipelined=True))
+            report("sequential_100hz_gpu_busy", U.run_cycles(ser, seconds, 100.0, pipelined=False))
             bg.wait()
     finally:
         ser.close()
@@ -465,11 +476,13 @@ def summary(run: Run):
                      f"{ua.get('fc', {}).get('fc_version')}" + (f"  ERROR {ua['error']}" if "error" in ua else ""))
         if "budget" in ua:
             lines.append(f"  link load at 100 Hz: {100 * ua['budget']['link_load_100hz']:.0f}%")
-        for k in ("sequential_100hz", "pipelined_100hz", "pipelined_100hz_gpu_busy", "pipelined_max_rate"):
+        for k in ("sequential_100hz", "pipelined_100hz", "sequential_after_pipelined", "sequential_max_rate",
+                  "sequential_100hz_gpu_busy", "pipelined_max_rate"):
             if k in ua:
                 v = ua[k]
                 lines.append(f"  {k:26s} cycle median {v['cycle_ms']['median']:.2f} / p99 {v['cycle_ms']['p99']:.2f} ms, "
-                             f"{v['achieved_hz']:.0f} Hz, missed {v['missed_deadlines']}, timeouts {v['timeouts']}")
+                             f"{v['achieved_hz']:.0f} Hz, missed {v['missed_deadlines']}, timeouts {v['timeouts']}"
+                             + ("" if v.get("fc_alive_after", True) else "  -> FC STOPPED ANSWERING"))
     tor = R.get("torch", {})
     loops = {k: v for k, v in tor.items() if k.startswith("loop_")}
     if loops:

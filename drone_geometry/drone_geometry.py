@@ -1,4 +1,5 @@
-"""INAIR racer geometry from the team's hand measurements (2026-11-13).
+"""INAIR racer geometry: team CAD drone_design_tilt30.step (2026-11-18) over the hand
+measurements of 2026-11-13 (kept below for reference).
 
 Origin: centre of the motor diagonals, at prop-plane height (4 cm above the floor
 when resting).  Frame used in this file: x forward, y RIGHT, z UP, cm -- the way
@@ -9,7 +10,7 @@ Measured (team):                    Shape only (from photos, not measured):
   front    x +13.5, z +1.0            antenna, RX whiskers
   rear     x -15.0, z -1.0
   top      x -1.0,  z +6.2
-  camera   x +12.0, y +0.2 (?), z +1.5, tilt 40 deg up -> being raised to 50
+  camera   x +12.0, y +0.2 (?), z +1.5; now 30 deg up (CAD tilt30: lens x +12.0, z +0.9)
   antennas inside the shell envelope (VTX tip 0.5 cm inside the tail; RX clear of props)
   stands   x +-8, y -4..+4, z -4 (floor)
   shell    widest 7.7 cm
@@ -27,16 +28,17 @@ plt.rcParams["axes.unicode_minus"] = False
 OUT = Path(__file__).with_suffix(".png")
 
 # ---------------- measured ----------------
-MX, MY = 15.66 / 2, 19.75 / 2   # CAD (Part Studio 1-2.step) motor centre holes; tape was 15.5 x 20.5
+MX, MY = 15.66 / 2, 19.75 / 2   # CAD motor centre holes (frame unchanged in drone_design_tilt30.step); tape was 15.5 x 20.5
 MOTORS = {"앞오른쪽": (MX, MY), "앞왼쪽": (MX, -MY), "뒤오른쪽": (-MX, MY), "뒤왼쪽": (-MX, -MY)}
 PROP_R = 5 * 2.54 / 2            # 5045 prop (team, 2026-11-13): 5.0 in dia -> 6.35 cm radius
 PROP_PITCH = 4.5 * 2.54          # 11.43 cm
 INFO = (
-    "사양 (2026-11-15, 형상은 CAD 기준)\n"
+    "사양 (2026-11-18, 형상은 CAD drone_design_tilt30.step 기준)\n"
     "기체   전비 0.95 kg (배선 추가로 소폭 증가 가능)\n"
     "       무게중심 (+0.0, +0.1, +1.2) cm (배터리 장착 상태, CAD 모터 위치로 재계산)\n"
-    "카메라 렌즈 x +11.7, y +0.1 (기체 오른쪽), z +1.2, 틸트 50° 위 (CAD·현재 40°, 각도만 변경 예정)\n"
-    "배치(CAD 중심) 배터리 (-3.0, +0.1, +2.5) 8.1x5.4x5.6 / Jetson (+5.5, +0.1, +2.2)\n"
+    "카메라 IMX219, 렌즈 앞면 (+12.0, +0.1, +0.9), 틸트 30° 위 (CAD)\n"
+    "배치(CAD 중심) 배터리 (-3.0, +0.1, +2.5) 8.1x5.4x5.6 / Jetson 하우징 (+6.1, -0.3, +3.9)\n"
+    "       12V BEC (-0.2, +0.1, +0.9) / XT30 (+9.7, -1.1, -0.3)\n"
     "       FC (+0.1, +0.1, -0.4) / ESC (-0.2, +0.1, -1.3) / XT60 (-6.4, +0.1, -1.0)\n"
     "배터리 LiPo 6S 1800 mAh (공칭 22.2 V, 만충 25.2 V), 1개만 사용\n"
     "모터   T-Motor VELOX V2208 V2 x4, 12N14P (14극), 37 g\n"
@@ -44,8 +46,7 @@ INFO = (
     "       1750 KV, 최대 약 1.46 kg/모터 (제조사, T5143S 6S 100%)\n"
     "프롭   5045 2엽: 직경 127 mm, 피치 114.3 mm\n"
     "       회전(위에서): 앞오른쪽·뒤왼쪽 CCW, 앞왼쪽·뒤오른쪽 CW = props in\n"
-    "추력대중량비  약 5.1-6.2 (추정, 중앙 ~5.6) / 호버 스로틀 약 33-38% (추정)\n"
-    "       = 4 x 1.2-1.46 kg / 0.95 kg. 실측(호버·펀치 로그)으로 확정 예정\n"
+    "추력대중량비  약 5.5-6 / 호버 스로틀 28-32% (비행 로그, flight_sysid.md)\n"
     "FC     SpeedyBee F405 V4 (STM32F405)\n"
     "ESC    SpeedyBee BLS 55A 4-in-1 (8bit, 3-6S, 55A x4, BLHeli_S)\n"
     "       RPM 텔레메트리(양방향 DShot)는 Bluejay 펌웨어로 교체 필요\n"
@@ -71,31 +72,31 @@ def blade_xy(cx, cy, ang, r0=1.4, r1=PROP_R, chord=1.7):
         side2 = np.c_[cy + r * u + w * v, cx + r * v - w * u]
         out.append(np.r_[side1, side2[::-1]])
     return out
-FRONT = (13.56, 0.0, -0.54)      # CAD
-REAR = (-16.01, 0.0, 0.43)       # CAD (tape -15.0)
+FRONT = (13.56, 0.0, -0.54)      # CAD camera cover
+REAR = (-16.01, 0.0, 0.43)       # CAD shell (tape -15.0)
 TOP = (2.59, 0.0, 5.71)          # CAD (tape x -1.0, z +6.2)
-CAM = (11.73, 0.12, 1.16)        # CAD lens front face; tape (12.0, 0.2, 1.5). y + = drone right
-CAM_TILT = 50.0           # CAD 39.8 = measured 40; team raises the tilt to 50, same position (2026-11-14)
-FLOOR = -4.0
+CAM = (12.00, 0.12, 0.93)        # CAD tilt30 lens front face (40 deg CAD: 11.73, 0.12, 1.16). y + = drone right
+CAM_TILT = 30.0           # CAD drone_design_tilt30.step
+FLOOR = -4.3                     # CAD legs (3 mm longer than the old CAD's -4.0)
 STAND_X, STAND_HALF_Y = 8.0, 4.0
-SHELL_HALF_W = 7.96 / 2          # CAD body width
+SHELL_HALF_W = 7.96 / 2          # CAD shell above the prop plane (-3.87 .. +4.09); its bottom flange is 11.8 wide
 MASS = 0.95                      # kg, all-up (team, 2026-11-13)
 # Centre of mass from 7 hanging photos (com/solve_com.py): hub nut assumed 1.0 cm
 # above the prop plane; the CoM is 0.26 cm above the nut.
 COM = (0.01, 0.05, 1.15)
 COM_LABEL = "무게중심 (+0.0, +0.1, +1.2)"
 
-# ---------------- shell: CAD cross-sections (body, lid, mounts; frame and legs excluded) ----
-XS = np.array([13.56, 12.5, 11.0, 9.0, 7.0, 4.0, 1.0, -1.0, -4.0, -7.0, -10.0, -13.0, -15.0, -16.01])
-BOT = np.array([-0.54, -1.95, -2.73, -2.32, -1.73, -1.73, -1.73, -1.73, -1.73, -1.73, -0.52, -0.24, -0.12, 0.40])
-TOPZ = np.array([-0.54, 0.80, 2.08, 3.41, 4.14, 5.23, 5.61, 5.69, 5.10, 4.02, 2.93, 1.85, 1.13, 0.40])
-HALFW = np.array([0.3, 1.99, 2.95, 3.30, 3.50, 3.80, 3.91, 3.71, 3.42, 3.12, 2.77, 2.10, 1.22, 0.0])
+# ---------------- body envelope: CAD cross-sections (all parts but the frame plate) ----
+XS = np.array([13.56, 12.5, 11.0, 9.0, 7.0, 5.0, 3.0, 1.0, -1.0, -3.0, -5.0, -7.0, -9.0, -11.0, -13.0, -15.0, -16.01])
+BOT = np.array([-0.56, -1.95, -2.73, -3.04, -1.73, -1.73, -1.73, -1.73, -1.73, -1.73, -1.73, -1.73, -3.23, -0.41, -0.24, -0.12, 0.32])
+TOPZ = np.array([-0.52, 0.84, 2.08, 3.41, 4.14, 4.86, 5.59, 5.61, 5.69, 5.39, 4.74, 4.02, 3.30, 2.57, 1.85, 1.13, 0.47])
+HALFW = np.array([0.06, 1.99, 2.95, 3.30, 4.0, 4.0, 3.90, 3.91, 3.71, 3.52, 3.32, 3.12, 2.92, 2.59, 2.10, 1.22, 0.03])  # x 5-7: shell 4.0 (flange 5.7 below z -1 not drawn)
 # component boxes from CAD: centre (x, y, z), size (fore-aft, lateral, height), cm
 BOXES = {"배터리": ((-3.04, 0.11, 2.45), (8.05, 5.40, 5.58), "tab:olive"),
-         "Jetson": ((5.52, 0.09, 2.18), (8.46, 5.32, 5.93), "tab:cyan"),
+         "Jetson": ((6.07, -0.26, 3.94), (8.09, 4.83, 3.54), "tab:cyan"),   # housing (바디-젯슨)
          "FC": ((0.05, 0.11, -0.44), (4.16, 3.94, 0.97), "tab:pink"),
          "ESC": ((-0.17, 0.11, -1.33), (4.16, 4.40, 0.81), "tab:gray")}
-CAD_GAPS = {"앞오른쪽": 0.3, "앞왼쪽": 1.4, "뒤오른쪽": 2.9, "뒤왼쪽": 6.2}   # mm, prop disc to nearest part
+CAD_GAPS = {"앞오른쪽": 0.3, "앞왼쪽": 1.4, "뒤오른쪽": 2.9, "뒤왼쪽": 6.2}   # mm, prop disc to the shell, prop plane
 
 
 def shell_at(x):
@@ -161,7 +162,7 @@ def draw():
     ax.set_box_aspect((36, 36, 18))
     ax.view_init(elev=22, azim=-130)
     ax.set_xlabel("x 전방"); ax.set_ylabel("y 오른쪽"); ax.set_zlabel("z 위")
-    ax.set_title("3D (셸 = CAD 단면 근사)")
+    ax.set_title("3D (몸체 = CAD 단면 근사)")
 
     # ---- top: x up the page, y to the right ----
     ax = fig.add_subplot(2, 2, 2)
@@ -231,16 +232,16 @@ def draw():
     ax.annotate("", (-CAM[0] - d[0], CAM[2] + d[1]), (-CAM[0], CAM[2]),
                 arrowprops=dict(arrowstyle="->", color="tab:red", lw=2))
     ax.plot(-CAM[0], CAM[2], "o", color="tab:red")
-    ax.text(-CAM[0] - 6.5, CAM[2] + 5.5, "카메라 렌즈 (x +11.7, z +1.2)\n틸트 50° 위 (CAD·현재 40°)", color="tab:red", fontsize=9)
+    ax.text(-CAM[0] - 6.5, CAM[2] + 5.5, "카메라 렌즈 (x +12.0, z +0.9)\n틸트 30° 위", color="tab:red", fontsize=9)
     for p, c, lab, off in ((FRONT, "tab:green", "가장 앞 (+13.6, z -0.5)", (-20.5, -2.6)),
                            (REAR, "tab:purple", "가장 뒤 (-16.0, z +0.4)", (11, -2.8)),
                            (TOP, "tab:brown", "가장 높은 (x +2.6, z +5.7)", (-3, 8.3))):
         ax.plot(-p[0], p[2], "o", color=c)
         ax.annotate(lab, (-p[0], p[2]), off, color=c, fontsize=9,
                     arrowprops=dict(arrowstyle="-", color=c))
-    ax.text(-8, FLOOR - 1.3, "받침대 x +8 / -8, z -4 (바닥)", color="tab:orange", fontsize=9, ha="center")
+    ax.text(-8, FLOOR - 1.3, "받침대 x +8 / -8, z -4.3 (바닥)", color="tab:orange", fontsize=9, ha="center")
     ax.annotate("", (16.8, FLOOR), (16.8, 0), arrowprops=dict(arrowstyle="<->"))
-    ax.text(17.1, -2, "4", va="center")
+    ax.text(17.1, -2, "4.3", va="center")
     for nm, ((cx, cy, cz), (lx, ly, lz), col) in BOXES.items():
         ax.add_patch(plt.Rectangle((-cx - lx / 2, cz - lz / 2), lx, lz, fill=False, ec=col, lw=1.6))
         if nm in ("배터리", "Jetson"):
@@ -256,7 +257,7 @@ def draw():
 
     # ---- front: looking at the nose, drone's right is on the viewer's LEFT ----
     ax = fig.add_subplot(2, 2, 4)
-    x0 = 1.0
+    x0 = -1.0
     b, tp, w = shell_at(x0)
     t = np.linspace(0, 2 * np.pi, 100)
     sup = lambda u: np.sign(u) * np.abs(u) ** 0.5  # noqa: E731
@@ -276,7 +277,7 @@ def draw():
     ax.text(-MY, -6.3, "기체 오른쪽", ha="center"); ax.text(MY, -6.3, "기체 왼쪽", ha="center")
     ax.set_xlim(-19, 19); ax.set_ylim(-7, 9); ax.set_aspect("equal"); ax.grid(alpha=0.3)
     ax.set_xlabel("y (정면에서 볼 때 왼쪽 = 기체 오른쪽)"); ax.set_ylabel("z (위 +)")
-    ax.set_title("정면에서 본 모습 (셸 단면은 x=+1 기준)")
+    ax.set_title("정면에서 본 모습 (몸체 단면은 x=-1 기준)")
 
     fig.tight_layout()
     fig.axes[0].set_position([0.385, 0.42, 0.22, 0.36])   # 3D panel clear of the spec box

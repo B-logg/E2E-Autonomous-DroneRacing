@@ -134,6 +134,17 @@ def identify(ser: Serial):
     return out
 
 
+def alive(ser: Serial, tries=3):
+    """Does the FC still answer MSP?  (A few tries, 0.3 s apart.)"""
+    for _ in range(tries):
+        ser.drain()
+        p, rtt = request(ser, MSP_API_VERSION, timeout=0.3)
+        if p:
+            return True
+        time.sleep(0.3)
+    return False
+
+
 def sample_readings(ser: Serial):
     """One decoded RAW_IMU + ATTITUDE (sanity check of units / frames on the bench)."""
     out = {}
@@ -162,13 +173,15 @@ def run_cycles(ser: Serial, seconds=20.0, rate_hz=100.0, pipelined=False, timeou
     period = 1.0 / rate_hz if rate_hz else 0.0
     cyc, rtts = [], {c: [] for c in cmds}
     timeouts = errors = late = stale = 0
+    fail_at = []                                  # cycle start (s from run start) of every cycle with a timeout
     tx0, rx0 = ser.tx_bytes, ser.rx_bytes
-    nxt = time.perf_counter()
+    nxt = start = time.perf_counter()
     end = nxt + seconds
     n = 0
     while time.perf_counter() < end:
         stale += ser.drain()
         t0 = time.perf_counter()
+        to0 = timeouts
         if pipelined:
             sent = {}
             for f, c in zip(frames, cmds):
@@ -192,6 +205,8 @@ def run_cycles(ser: Serial, seconds=20.0, rate_hz=100.0, pipelined=False, timeou
                     if r[0] == c:
                         rtts[c].append(r[3] - ts); errors += (not r[2]); break
         cyc.append(time.perf_counter() - t0)
+        if timeouts > to0:
+            fail_at.append(t0 - start)
         n += 1
         if period:
             nxt += period
@@ -201,7 +216,7 @@ def run_cycles(ser: Serial, seconds=20.0, rate_hz=100.0, pipelined=False, timeou
             else:
                 time.sleep(slack)
     return dict(cycles=n, seconds=seconds, achieved_hz=n / seconds, cycle_s=cyc, rtt_s=rtts,
-                timeouts=timeouts, errors=errors, missed_deadlines=late, late_frames=stale,
+                timeouts=timeouts, errors=errors, missed_deadlines=late, late_frames=stale, fail_at_s=fail_at,
                 tx_bytes=ser.tx_bytes - tx0, rx_bytes=ser.rx_bytes - rx0)
 
 

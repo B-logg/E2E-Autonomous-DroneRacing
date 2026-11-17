@@ -160,7 +160,7 @@ def test_camera_frame_rate(cfg):
 
 
 def test_camera_field_and_launch_view(cfg):
-    """The policy image spans the Pi Cam v2 full field (62.2 x 48.8 deg) at the 30 deg mount,
+    """The policy image spans the calibrated Pi Cam v2 field (63.2 x 49.6 deg) at the 30 deg mount,
     and from the floor launch the start gate is in view."""
     from ctba import camera as CAM
     spec = cfg.camera
@@ -168,7 +168,30 @@ def test_camera_field_and_launch_view(cfg):
     rays = np.asarray(CAM.pixel_rays(spec, 64, 64))
     h_edge = np.degrees(np.arctan(np.abs(rays[..., 1]).max()))
     v_edge = np.degrees(np.arctan(np.abs(rays[..., 2]).max()))
-    assert abs(2 * h_edge - 62.2) < 2.0 and abs(2 * v_edge - 48.8) < 2.0, (h_edge, v_edge)
+    assert abs(2 * h_edge - 63.2) < 2.0 and abs(2 * v_edge - 49.6) < 2.0, (h_edge, v_edge)
     c = cfg._replace(base=cfg.base._replace(train_fraction=0.0))
     st, o = E.reset(jax.random.key(2), c)
     assert float(np.asarray(st.mask_buf[-1]).mean()) > 0.02
+
+
+def test_gatenet_mask_resizes_onto_policy_K():
+    """GateNet runs on a 240x320 undistorted image; its mask resized to 64x64 must sit on
+    the pinhole the policy was trained on (same field, pixel-centre convention)."""
+    from ctba import camera as C
+    h, w = C.GATENET_HW
+    assert (h, w) == (240, 320) and C.GATENET_F == 4
+    assert w * 3 == h * 4                      # 4:3, the full-field mode
+    S = np.diag([64 / w, 64 / h, 1.0])
+    np.testing.assert_allclose(S @ C.gatenet_K(), C.policy_K(C.DEFAULT), rtol=1e-12)
+
+
+def test_calibrated_field_has_no_black_border():
+    """The trained field must fit inside the real (calibrated) lens: undistorting onto the
+    GateNet pinhole leaves no border, and the field is within 1 deg of the largest that fits."""
+    from ctba import camera as C
+    cal = C.load_calibration()
+    assert C.coverage(cal, C.DEFAULT, *C.GATENET_HW) == 1.0
+    small = C.calibration_at(cal, 320, 240)            # the ISP-resized frame the Jetson gets
+    assert C.coverage(small, C.DEFAULT, *C.GATENET_HW) == 1.0
+    h, v = C.usable_field(cal)
+    assert 0 <= h - C.DEFAULT.hfov_deg < 1.0 and 0 <= v - C.DEFAULT.vfov_deg < 1.0, (h, v)
