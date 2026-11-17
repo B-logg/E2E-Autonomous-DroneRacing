@@ -122,7 +122,13 @@ def main() -> int:
     task = f"ce_{args.track}"
     env = Ctba(task)
     agent, cfg = _sd_eval().build_agent(args.logdir, env)
-    with jax.default_device(jax.devices("cpu")[0]), jax.transfer_guard("allow"):
+    # DreamerV3 pins jax_platforms to its `jax.platform` (cuda on the server), so the
+    # cpu backend may not exist once the agent is built; the config is cheap anywhere.
+    try:
+        dev = jax.devices("cpu")[0]
+    except RuntimeError:
+        dev = jax.devices()[0]
+    with jax.default_device(dev), jax.transfer_guard("allow"):
         ccfg = tasks.make_config(task, max_steps=cfg.env.ctba.max_steps)
         ccfg = ccfg._replace(base=ccfg.base._replace(train_fraction=0.0))   # every flight from the floor
     recs = rollout(agent, ccfg, args.episodes, args.laps, args.seed)

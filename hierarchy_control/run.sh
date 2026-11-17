@@ -48,6 +48,9 @@ setup() {
   # skydreamer's setup builds the venv and the patched DreamerV3; it exits after setup
   (cd "${SKYDREAMER}" && ./run.sh --setup-only)
   log "ctba package + DreamerV3 registration"
+  # skydreamer's setup may have just installed uv into ~/.local/bin (not yet on PATH here);
+  # its venv has no pip, so uv is the installer.
+  export PATH="${HOME}/.local/bin:${HOME}/.cargo/bin:${PATH}"
   if command -v uv >/dev/null 2>&1; then
     uv pip install --python "${PY}" --quiet -e "${HERE}"
   else

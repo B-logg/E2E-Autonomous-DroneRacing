@@ -25,7 +25,7 @@ TOP = [-0.52, 0.84, 2.08, 3.41, 4.14, 4.86, 5.59, 5.61, 5.69, 5.39, 4.74, 4.02, 
 HALFW = [0.06, 1.99, 2.95, 3.30, 5.32, 5.68, 3.90, 3.91, 3.71, 3.52, 3.32, 3.12, 2.92, 2.59, 2.10, 1.22, 0.03]
 STAND_X = (8.04, -8.16)           # cm, front / rear floor-contact centres (CAD)
 STAND_Y = 4.0
-STAND_Z = -4.3                    # stand bottoms (floor contact); legs 3 mm longer than Part Studio 1-2
+STAND_Z = -4.3                    # stand bottoms (floor contact); measured 2026-11-18 (= CAD tilt30 legs)
 
 
 def _to_body(pts_cm: np.ndarray) -> np.ndarray:
