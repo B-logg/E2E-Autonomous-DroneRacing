@@ -9,6 +9,7 @@ The curriculum (planned before training; README.md):
       (5 m/s), the centre-of-mass gate window with some leniency (0.60 m train).
   c2  regulate speed: the room's cap (4 m/s, track.V_CAP).
   c3  stay off the floor: + floor-sink penalty and the altitude margin.
+      (not in the schedule since 2026-11-19: scripts/train.py)
   c4  clear gates with the whole airframe: the real gate plane scored and tested
       on the CAD footprint, train window = real window (0.45 m).
   ce  what every stage is scored on: c4's conditions (the real test).

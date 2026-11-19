@@ -3,7 +3,7 @@
 # CTBA racing policy: setup, demonstrations, curriculum training, evaluation.
 #
 #   ./run.sh --setup                 venv + DreamerV3 (via skydreamer) + ctba registration
-#   ./run.sh --smoke                 ~10 min CPU/GPU: tests + a tiny 5-stage run + eval
+#   ./run.sh --smoke                 ~10 min CPU/GPU: tests + a tiny 4-stage run + eval
 #   ./run.sh --collect-demos         CTBA demonstrations on our track -> ./demos_ctba
 #   ./run.sh                         the curriculum, 16M steps (demos seeded if ./demos_ctba exists)
 #   ./run.sh --resume [--from-stage N]   continue the newest run
@@ -93,7 +93,7 @@ smoke)
   "${PY}" "${HERE}/scripts/collect_demos.py" --out "${RUN}/demos" --track "${TRACK}" \
       --episodes 64 --max-keep 4 --size size1m
   cp "${RUN}/demos/replay/"*.npz "${RUN}/replay/"
-  log "tiny 5-stage curriculum -> ${RUN}"
+  log "tiny 4-stage curriculum -> ${RUN}"
   "${PY}" "${HERE}/scripts/train.py" --logdir "${RUN}" --track "${TRACK}" --size size1m \
       --steps-scale 0.0002 --run.envs 2 --batch_size 8 --batch_length 16 --report_length 16 \
       --replay_context 1 --run.train_ratio 16 --run.log_every 60 --run.report_every 1e9 \
