@@ -5,7 +5,7 @@
 #   ./run.sh --setup                 venv + DreamerV3 (via skydreamer) + ctba registration
 #   ./run.sh --smoke                 ~10 min CPU/GPU: tests + a tiny 4-stage run + eval
 #   ./run.sh --collect-demos         CTBA demonstrations on our track -> ./demos_ctba
-#   ./run.sh                         the curriculum, 16M steps (demos seeded if ./demos_ctba exists)
+#   ./run.sh                         the curriculum, 20M steps (demos seeded if ./demos_ctba exists)
 #   ./run.sh --resume [--from-stage N]   continue the newest run
 #   ./run.sh --eval <run dir>        1 and 3 laps, 200 flights each, real-gate airframe check
 #

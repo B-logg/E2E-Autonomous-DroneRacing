@@ -6,13 +6,18 @@ the previous stage's checkpoint and replay in the same logdir.
   1      0    -> 6M          c1 (complete)  phase 1: batch_length 64
   2      6M   -> 8M          c2 (speed)     phase 2: batch_length 256
   3      8M   -> 14M         c4 (gate)      phase 2
-  4      14M  -> 16M         c4             phase 3: actent 1e-5, lr 2e-6
+  4      14M  -> 20M         c4             phase 3: actent 1e-5, lr 2e-6
 
 c3 (floor penalty alone) was dropped on 2026-11-19 after the 6.24M evaluation
 (ce, 200 flights): 1 lap 92%, 3 laps 66%; floor crashes 1-2% and airframe
 outside the opening 0-1%, while gate collisions were 62 of the 68 3-lap failures
 -- c1/c2 train on the 0.60 m window, the test is 0.45 m.  c4 already carries
 the floor penalty and altitude margin, so its 3M became 6M.
+
+Stage 4 was extended from 16M to 20M on 2026-11-22.  In the 16M run (ce, 3 laps,
+200 flights, seed 20000) stage 3 swung between 36.5% and 74% from one 0.5M snapshot
+to the next, while stage 4 rose at every snapshot: 65, 68.5, 73, 75.5, 79.5%.
+It was still rising at 16M.  ./run.sh --resume continues stage 4 from 16M.
 
 Phase settings are SkyDreamer's (section III-A).  Demonstrations, if any, are
 copied into <logdir>/replay before stage 1 (run.sh --demos).
@@ -41,7 +46,7 @@ SCHEDULE = [
     (6e6, "c1", 1),
     (8e6, "c2", 2),
     (14e6, "c4", 2),
-    (16e6, "c4", 3),
+    (20e6, "c4", 3),
 ]
 
 
