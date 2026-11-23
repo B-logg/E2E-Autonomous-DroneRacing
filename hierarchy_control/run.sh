@@ -8,6 +8,10 @@
 #   ./run.sh                         the curriculum, 20M steps (demos seeded if ./demos_ctba exists)
 #   ./run.sh --resume [--from-stage N]   continue the newest run
 #   ./run.sh --eval <run dir>        1 and 3 laps, 200 flights each, real-gate airframe check
+#   STOCHGAN_WEIGHTS=<G.npz> ./run.sh --finetune-stochgan <snapshot or run dir> [--ft-run <dir>]
+#                                    2M steps on StochGAN masks from that agent (scripts/finetune_stochgan.py),
+#                                    then 1/3-lap evaluations on clean (ce) and StochGAN (ceg) masks;
+#                                    --ft-run resumes an unfinished fine-tune run
 #
 # Lives inside the skydreamer repository (hierarchy_control/); SKYDREAMER=<path> overrides.
 # Track: CTBA_TRACK (default team44up).  Runs go to CTBA_LOGDIR (default ./logdir).
@@ -28,7 +32,7 @@ SNAP_EVERY="${CTBA_SNAPSHOT_EVERY:-5e5}"
 log() { printf '\n\033[1m== %s ==\033[0m\n' "$*"; }
 die() { printf '\033[31merror:\033[0m %s\n' "$*" >&2; exit 1; }
 
-MODE="train"; EVAL_DIR=""; FROM_STAGE=""; EXTRA=()
+MODE="train"; EVAL_DIR=""; FROM_STAGE=""; FT_SRC=""; FT_RUN=""; EXTRA=()
 while [ $# -gt 0 ]; do
   case "$1" in
     --setup) MODE="setup" ;;
@@ -37,6 +41,8 @@ while [ $# -gt 0 ]; do
     --resume) MODE="resume" ;;
     --from-stage) FROM_STAGE="$2"; shift ;;
     --eval) MODE="eval"; EVAL_DIR="$2"; shift ;;
+    --finetune-stochgan) MODE="stochgan"; FT_SRC="$2"; shift ;;
+    --ft-run) FT_RUN="$2"; shift ;;
     *) EXTRA+=("$1") ;;
   esac
   shift
@@ -118,6 +124,38 @@ eval)
   done
   exit 0 ;;
 esac
+
+# ---- StochGAN fine-tune ------------------------------------------------------
+if [ "${MODE}" = "stochgan" ]; then
+  quick_setup
+  [ -e "${FT_SRC}" ] || die "no source at ${FT_SRC} (a snapshots/step_N dir or a run dir)"
+  RUN="${FT_RUN:-${LOGROOT}/ctba-stochgan-${TRACK}-$(date +%Y%m%d-%H%M%S)}"
+  if [ ! -f "${RUN}/stochgan_G.npz" ]; then
+    [ -n "${STOCHGAN_WEIGHTS:-}" ] && [ -f "${STOCHGAN_WEIGHTS}" ] \
+      || die "set STOCHGAN_WEIGHTS=<generator .npz> (scripts/convert_stochgan.py)"
+  fi
+  mkdir -p "${RUN}/replay"
+  log "StochGAN fine-tune ${FT_SRC} -> ${RUN}"
+  "${PY}" "${SKYDREAMER}/scripts/prune_replay.py" --logdir "${RUN}" --keep-steps 10000000 \
+      --interval 600 >> "${RUN}/prune.log" 2>&1 &
+  PRUNER=$!
+  "${PY}" "${SKYDREAMER}/scripts/milestone_snapshots.py" --logdir "${RUN}" --every "${SNAP_EVERY}" \
+      --interval 300 >> "${RUN}/snapshots.log" 2>&1 &
+  SNAPPER=$!
+  trap 'kill ${PRUNER} ${SNAPPER} 2>/dev/null || true' EXIT
+  "${PY}" "${HERE}/scripts/finetune_stochgan.py" --source "${FT_SRC}" --logdir "${RUN}" --track "${TRACK}" \
+      --jax.prealloc False --run.envs "${ENVS}" ${JAX_ARGS[@]+"${JAX_ARGS[@]}"} "${LOG_ARGS[@]}" \
+      ${EXTRA[@]+"${EXTRA[@]}"} 2>&1 | tee -a "${RUN}/train.log"
+  log "evaluation (clean masks: ce, StochGAN masks: ceg)"
+  export STOCHGAN_WEIGHTS="${RUN}/stochgan_G.npz"
+  for ST in ce ceg; do
+    for L in 1 3; do
+      "${PY}" "${HERE}/scripts/evaluate.py" --logdir "${RUN}" --track "${TRACK}" --stage "${ST}" \
+          --episodes 200 --laps "${L}" 2>&1 | tee -a "${RUN}/eval.log"
+    done
+  done
+  log "Done: ${RUN}"; exit 0
+fi
 
 # ---- train / resume -------------------------------------------------------
 quick_setup

@@ -9,6 +9,7 @@ crosses a gate plane must do so inside the opening.  Success = the simulator's
 own verdict AND that check, for `--laps` laps.
 
     python scripts/evaluate.py --logdir <run> [--episodes 200] [--laps 1] [--track team44up]
+                               [--stage ceg]   (ceg: masks through StochGAN, $STOCHGAN_WEIGHTS)
 """
 from __future__ import annotations
 
@@ -113,13 +114,15 @@ def main() -> int:
     ap.add_argument("--laps", type=int, default=1)
     ap.add_argument("--seed", type=int, default=20000)
     ap.add_argument("--tag", default="")
+    ap.add_argument("--stage", default="ce", choices=["ce", "ceg"],
+                    help="ce: rendered masks (the curriculum's test); ceg: the same through StochGAN")
     args = ap.parse_args()
 
     import jax
     from ctba import tasks
     from ctba.embodied import Ctba
 
-    task = f"ce_{args.track}"
+    task = f"{args.stage}_{args.track}"
     env = Ctba(task)
     agent, cfg = _sd_eval().build_agent(args.logdir, env)
     # DreamerV3 pins jax_platforms to its `jax.platform` (cuda on the server), so the
@@ -150,7 +153,7 @@ def main() -> int:
     ]
     text = "\n".join(lines)
     print(text)
-    name = f"evaluation_ctba_{args.laps}lap{args.tag}"
+    name = f"evaluation_ctba_{args.laps}lap{'' if args.stage == 'ce' else '_' + args.stage}{args.tag}"
     (args.logdir / f"{name}.txt").write_text(text + "\n")
     (args.logdir / f"{name}.json").write_text(json.dumps(recs))
     return 0

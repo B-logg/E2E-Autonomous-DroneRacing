@@ -39,7 +39,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
-from skydreamer import augment
+from skydreamer import augment, gan
 from skydreamer.dynamics import euler_to_quat, quat_to_matrix
 from skydreamer.render import camera_rotation
 from skydreamer.track import Track, gate_rotation
@@ -198,15 +198,27 @@ def render_mask(p_cam, q, c_e, track: Track, spec: CameraSpec, h: int = 64, w: i
     return (jnp.min(depth, axis=-1) < jnp.inf).astype(jnp.float32)
 
 
-def render_augmented(state, cfg, spec: CameraSpec) -> jax.Array:
+def render_augmented(state, cfg, spec: CameraSpec, stochgan: bool = False) -> jax.Array:
     """skydreamer.env._render_augmented for this camera: camera ahead of the CoM, mask
     erosion, rolling shutter.  The rolling-shutter strength is per radian of camera
-    rotation, so it scales with the focal length in pixels."""
+    rotation, so it scales with the focal length in pixels.
+
+    `stochgan`: the clean render goes through the StochGAN generator first (paper II-F:
+    GAN, then rolling shutter and erosion), with weights from $STOCHGAN_WEIGHTS
+    (skydreamer/gan.py).  Erosion is then the 1-pixel one on the GAN's output, never the
+    geometric shrink of the render."""
     p_cam = state.s.p
     if cfg.cam_offset:
         p_cam = p_cam + quat_to_matrix(state.s.q)[..., :, 0] * cfg.cam_offset
-    shrink = 0.0 if cfg.erode_px is None else jnp.where(state.erode, cfg.erode_px, 0.0)
     n = cfg.image_size
+    if stochgan:
+        mask = render_mask(p_cam, state.s.q, state.c_e, cfg.track, spec, n, n, 0.0)
+        mask = gan.translate(gan.load(), (mask > 0.5).astype(jnp.float32),
+                             jax.random.fold_in(state.key, 0x5106A))
+        fx = intrinsics(spec, n, n)[0]
+        return augment.apply(mask, state.s.omega_b, state.c_e, state.rs_s * fx / (SD_FOCAL_RATIO * n),
+                             state.erode)
+    shrink = 0.0 if cfg.erode_px is None else jnp.where(state.erode, cfg.erode_px, 0.0)
     mask = render_mask(p_cam, state.s.q, state.c_e, cfg.track, spec, n, n, shrink)
     erode = state.erode if cfg.erode_px is None else jnp.array(False)
     fx = intrinsics(spec, n, n)[0]

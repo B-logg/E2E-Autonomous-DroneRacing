@@ -13,6 +13,9 @@ The curriculum (planned before training; README.md):
   c4  clear gates with the whole airframe: the real gate plane scored and tested
       on the CAD footprint, train window = real window (0.45 m).
   ce  what every stage is scored on: c4's conditions (the real test).
+  c4g / ceg  c4 / ce with every rendered mask passed through the StochGAN generator
+      (weights: $STOCHGAN_WEIGHTS) before rolling shutter and erosion: the fine-tuning
+      stage after the curriculum (scripts/finetune_stochgan.py) and its test.
 """
 from __future__ import annotations
 
@@ -42,6 +45,8 @@ STAGES = {
     "c4": dict(v_cap=None, d_g=(0.45, 0.45), floor_penalty=True, alt_margin=True, swept=True),
     "ce": dict(v_cap=None, d_g=(0.45, 0.45), floor_penalty=True, alt_margin=True, swept=True),
 }
+STAGES["c4g"] = dict(STAGES["c4"], stochgan=True)
+STAGES["ceg"] = dict(STAGES["ce"], stochgan=True)
 
 # Per-step reward weights in skydreamer.track are per 90 Hz step; ours are 100 Hz.
 STEP_SCALE = T.CONTROL_FREQ / P.CONTROL_FREQ
@@ -52,6 +57,7 @@ class CtbaConfig(NamedTuple):
     stage: str
     track_name: str
     camera: CAM.CameraSpec = CAM.DEFAULT
+    stochgan: bool = False      # rendered masks through the StochGAN generator (skydreamer/gan.py)
 
 
 def split(task: str) -> tuple[str, str]:
@@ -93,4 +99,8 @@ def make_config(task: str, image_size: int = 64, max_steps: int = 2000, camera: 
         swept_points=A.footprint().astype(np.float32) if st["swept"] else None,
         w_alt=(T.W_ALT * STEP_SCALE) if st["alt_margin"] else 0.0,
     )
-    return CtbaConfig(base=base, stage=stage, track_name=name, camera=spec)
+    stochgan = bool(st.get("stochgan", False))
+    if stochgan:
+        from skydreamer import gan
+        gan.load()                  # fail at construction, not inside the first jitted step
+    return CtbaConfig(base=base, stage=stage, track_name=name, camera=spec, stochgan=stochgan)

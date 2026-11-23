@@ -193,7 +193,7 @@ def reset(key: jax.Array, ccfg: CtbaConfig):
         term_cause=jnp.array(0, jnp.int32), grounded=launch, airborne=~launch,
         alt_ok=jnp.array(False), approached=jnp.array(False),
     )
-    mask = CAM.render_augmented(state, cfg, ccfg.camera)
+    mask = CAM.render_augmented(state, cfg, ccfg.camera, ccfg.stochgan)
     state = state._replace(mask_buf=jnp.broadcast_to(mask, state.mask_buf.shape))
     return state, observe(state, ccfg)
 
@@ -366,7 +366,7 @@ def step(state: EnvState, action: jax.Array, ccfg: CtbaConfig):
     phase = state.cam_phase + 1.0
     fresh = phase >= state.cam_period
     phase = jnp.where(fresh, phase - state.cam_period, phase)
-    mask = jnp.where(fresh, CAM.render_augmented(new, cfg, ccfg.camera), new.mask_buf[-1])
+    mask = jnp.where(fresh, CAM.render_augmented(new, cfg, ccfg.camera, ccfg.stochgan), new.mask_buf[-1])
     new = new._replace(mask_buf=jnp.concatenate([new.mask_buf[1:], mask[None]], 0), cam_phase=phase)
     truncated = new.step_count >= cfg.max_steps
     return new, observe(new, ccfg), reward, terminal, truncated

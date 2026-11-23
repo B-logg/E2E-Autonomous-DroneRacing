@@ -112,6 +112,32 @@ c3(바닥 감점만 추가하는 단계)는 2026-11-19에 뺐습니다. 6.24M �
 
 기준에 못 미치거나 직전 단계보다 나빠지면, 그 단계의 직전 스냅샷(`snapshots/`, 0.5M마다 저장)으로 돌아가서 원인을 확인한 다음 진행합니다.
 
+## StochGAN 파인튜닝 (scripts/finetune_stochgan.py)
+
+커리큘럼은 깨끗한 렌더링 마스크로 학습합니다. 이 단계는 커리큘럼에서 가장 좋은 가중치를 가져와, 모든 렌더링 마스크를
+StochGAN 생성기에 통과시킨 뒤(그다음 롤링셔터·침식, 논문 II-F 순서) 계속 학습합니다. 실제 GateNet 마스크의 결손·잡음에
+월드 모델을 맞추는 것이 목적입니다.
+
+| 단계 | 스텝 | 과제 | DreamerV3 |
+|---|---|---|---|
+| g | 0 → 2M (새 run) | c4g = c4 + StochGAN 마스크 | phase 3 (actent 1e-5, lr 2e-6) |
+
+- **생성기:** 논문 부록 B 구조(ngf 32, residual 6개, InstanceNorm, 입력 = 마스크 + 잡음 채널)를 JAX로 구현했습니다
+  (`skydreamer/gan.py`). 팀원이 PyTorch로 학습한 렌더링→실제 방향 생성기를 npz로 바꿔 씁니다.
+- **시작 가중치:** `--run.from_checkpoint`로 가중치·옵티마이저 상태를 불러오고, 스텝은 새 run에서 0부터 셉니다.
+  replay는 기본적으로 비워서 시작합니다(이전 파인튜닝 run 6~7k와 같은 방식). `--replay-steps N`이면 원래 run의
+  최근 N 스텝(깨끗한 마스크)을 미리 넣습니다.
+- **2M 스텝인 이유:** 단계 4와 같은 길이입니다. 단계 4는 처음 2M 동안 올랐고(16M 3랩 79.5%), 20M에서는
+  61.5%로 떨어졌습니다. 그래서 0.5M 스냅샷을 `ceg`로 평가해 가장 좋은 것을 고릅니다.
+- **평가:** `--stage ce`(깨끗한 마스크)와 `--stage ceg`(StochGAN 마스크) 둘 다 봅니다. 실기체에 더 가까운 쪽은 `ceg`입니다.
+
+```
+python scripts/convert_stochgan.py G_rendered2real.pth --out stochgan_G.npz [--key netG_A] [--check]
+STOCHGAN_WEIGHTS=$PWD/stochgan_G.npz ./run.sh --finetune-stochgan logdir/<run>/snapshots/step_<N>
+./run.sh --finetune-stochgan <같은 소스> --ft-run logdir/ctba-stochgan-<날짜>      # 중단된 run 이어 하기
+STOCHGAN_WEIGHTS=... python scripts/evaluate.py --logdir <스냅샷> --stage ceg --laps 3 --episodes 200
+```
+
 ## 실행
 
 skydreamer 저장소 안의 `hierarchy_control/`에서 실행합니다. skydreamer 경로는 상위 폴더가 기본값입니다.
