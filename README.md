@@ -1,143 +1,178 @@
-# 모터를 직접 제어하는 DreamerV3 드론 레이싱
+# World Model-Based Autonomous Drone Racing with Hierarchical Control
 
-게이트 분할 마스크와 자이로·RPM 값만 보고 네 개의 모터 명령을 직접 출력해 게이트를 통과하는 정책입니다. \
-정보 디코더(informed decoder)를 붙인 DreamerV3 월드모델이 상태 추정기 역할을 합니다. \
-액터-크리틱은 월드모델이 만든 상상 속 비행에서 행동을 학습합니다.
+<p align="center"><img src="docs/ctba/sim_16M_3laps.gif" width="720" alt="Final policy flying three laps in simulation"></p>
 
-## 시뮬레이션 결과
+A world-model policy (Informed DreamerV3) reads **gate masks + IMU** and outputs
+**collective thrust, roll/pitch angle and yaw rate (CTBA)**. A commercial flight controller
+(Betaflight, angle mode) tracks these commands. Training runs in a CTBA simulator identified from manual
+flight logs of our own quadrotor, on a split-S track that replicates our indoor arena.
 
-인버티드 루프 트랙(한 바퀴 게이트 3개, 가상 게이트 1개 포함), 16.99M 스텝 체크포인트,
-200 에피소드 × 5랩. 평가는 논문과 같은 방식입니다(Table III 평가 열, 모든 에피소드를 시작 게이트에서 출발).
+| | |
+|---|---|
+| Three-lap success | **79.7%** (600 randomized flights, takeoff from the floor) |
+| One-lap success | **91.7%** |
+| Median three-lap time / top speed | **14.1 s / 6.0 m/s** |
+| Gate check | the whole airframe must pass inside every gate opening |
+| Sim-to-real | **ongoing**: hardware, track and onboard pipeline are ready ([details](#sim-to-real-ongoing)) |
 
-| | 이 구현 | SkyDreamer (Table IV) |
+Code: branch [`ctba`](https://github.com/B-logg/E2E-Autonomous-DroneRacing/tree/ctba/hierarchy_control) (`hierarchy_control/`).
+
+---
+
+## Results (simulation)
+
+![Simulated three-lap flight and replay of a manual flight](docs/ctba/results.png)
+
+(a) Representative three-lap flight of the final policy: 13.9 s, peak 6.0 m/s; arrows show the camera axis.
+(b) A manual track flight replayed in the CTBA simulator with the logged inputs: log (black), simulator (orange), command (gray).
+
+| Metric (600 flights each) | Stage-2 end (8M steps) | Final policy (16M steps) |
 |---|---|---|
-| 5랩 성공률 | **87.5%** (175/200, 95% 신뢰구간 ±4.6) | 100% |
-| 1랩 시간 | 1.93 s | 3.37 s |
-| 2~5랩 시간 | 2.24 s | 3.25 s |
-| 최고 속도 (에피소드별 최고값의 평균) | 12.8 m/s | 13 m/s |
-| 최고 가속도 (에피소드별 최고값의 평균) | 6.2 g | 6 g |
-| 최고 속도 / 가속도 (전체 최댓값) | 17.9 m/s / 10.4 g | — |
-| 게이트 통과 시 중심에서의 평균 거리 | 0.32 m | — |
-| 월드모델 위치 오차 (복원값 대 실제값) | 전체 비행 0.14 m, 처음 20스텝 0.25 m | — |
-| 월드모델 속도 오차 | 전체 비행 0.67 m/s | — |
+| 1-lap success | 81.8% | **91.7%** |
+| 3-lap success | 44.7% | **79.7%** |
+| Crashes (gate / floor / wall) | 299 / 32 / 1 | 117 / 4 / 1 |
+| Median time (1 / 3 laps) | 4.5 / 14.4 s | 4.4 / 14.1 s |
+| Median top speed (3 laps) | 6.0 m/s | 6.0 m/s |
 
-에피소드 결과: 5랩 완주 175, 지면 충돌 17, 게이트 충돌 8. 실패 25건 중 14건은 첫 두 게이트에서 발생했습니다.
+Both success rates are higher at 16M (two-proportion z-test: z = 5.0 / 12.5, p < 0.001).
+Evaluation: randomized dynamics and delays ([table below](#hierarchical-control-and-the-ctba-simulator)), takeoff from the floor 1.8–2.0 m before G1,
+gates passed in order without collision.
 
-![비행 0](docs/results/flight_0.gif)
-![비행 1](docs/results/flight_1.gif)
+![Success rate during training](docs/ctba/learning_curve.png)
 
-16.99M 체크포인트의 2랩 비행입니다. 패널 구성: 정책이 받는 마스크, 3D 뷰, 위에서 본 뷰와 옆에서 본 뷰(속도별 색상).
+![World-model decoding](docs/ctba/world_model_decoding.png)
 
-![월드모델의 추정과 실제 궤적 비교](docs/results/figure_0.png)
+The world model decodes privileged state from masks + IMU during the same flight: (a) position, (b) image delay
+and thrust time constant (solid: true, dashed: decoded).
 
-실제 궤적(색상)과 월드모델이 복원한 위치(파란선), 평균 오차 0.20 m. 화살표는 카메라 광축입니다.
+---
 
-### 학습
+## Method
 
-17M 스텝, 3단계 일정(기본 설정 → 8M부터 `batch_length` 256 → 13M부터 엔트로피 1e-5, 학습률 2e-6),
-모델 크기 `size12m`, `train_ratio` 128. 월드모델은 이전 학습에서 가져와 초기화하고, 행동 정책(actor-critic)은
-처음부터 학습했으며, 리플레이 버퍼에 전문가 에피소드 800개(각 2000스텝, 5~9게이트 통과)를 미리 넣었습니다.
+![Framework](docs/ctba/framework.png)
 
-![학습 곡선](docs/results/learning_curve.png)
+### Hierarchical control and the CTBA simulator
 
-| 스텝 | 성공률 | 통과 게이트 수 (최대 15) | 위치 오차 [m] | 에피소드 수 |
-|---|---|---|---|---|
-| 1.2M | 0% | 1.12 | 1.59 | 100 |
-| 6.2M | 73% | 12.40 | 0.25 | 100 |
-| 7.5M | 80% | 13.15 | 0.20 | 100 |
-| 11.4M | 91% | 13.94 | 0.17 | 100 |
-| 14.9M | 87% | 13.55 | 0.15 | 100 |
-| 17.0M | 87.5% | 13.56 | 0.14 | 200 |
+| Layer | Runs on | Rate | Role |
+|---|---|---|---|
+| Policy (encoder + RSSM + actor) | Jetson Orin Nano | 100 Hz | gate mask + IMU + FC attitude + flight plan → CTBA |
+| Betaflight angle mode | SpeedyBee F405 V4 | 4 kHz | attitude estimate → angle loop → rate loop → motor mixing |
 
-11M 이후 성공률은 신뢰구간(±5~6%p) 안에서 거의 변하지 않습니다.
+The simulator reproduces the FC's closed-loop response instead of motors and propellers: angle loop (gain K_L),
+2nd-order roll/pitch and 1st-order yaw rate response, thrust with delay and time constant, rigid-body dynamics,
+and Betaflight's Mahony attitude estimator. Everything is identified from Blackbox logs of manual angle-mode flights.
 
-### 게이트 통과 판정 창
+| Parameter | Nominal | Training | Evaluation |
+|---|---|---|---|
+| Level gain K_L (1/s) | 4.9 | 4.6–5.2 | 4.6–5.2 |
+| Rate ω_n/2π, roll/pitch (Hz) | 18.3 / 11.0 | ×0.8–1.25 | ×0.8–1.25 |
+| Damping ζ, roll/pitch | 0.49 / 0.51 | 0.35–0.8 | 0.35–0.8 |
+| Yaw τ_z (ms) | 22 | 13–35 | 13–35 |
+| Estimator gain k_p | 0.25 | 0.22–0.28 | 0.22–0.28 |
+| Thrust delay / τ_T (ms) | 10 / 17 | 5–15 / 12–30 | 5–15 / 12–30 |
+| Image delay (ms) | 46–65 (measured) | 40–70 | 40–70 |
+| Mask rate (fps) | 30 | 25–30 | 25–30 |
+| Action delay (ms) | 1.8–2.3 (measured) | 10–20 | 10–20 |
+| Camera tilt (°) | 30 | 25–35 | 25–35 |
+| Disturbance (m/s²) | – | ±3 | ±2 |
+| Floor takeoff (%) | – | 30 | 100 |
 
-시뮬레이터의 통과 판정 창 `d_g`는 논문이 말하는 "게이트의 유효 크기"입니다(학습 0.8 m, 평가 1.0 m).
-이 트랙의 게이트는 안쪽 1.5 m, 즉 반폭 0.75 m입니다. 정책은 `d_g`를 관측하지 않으므로, 한 번 비행한 기록을
-여러 창 크기로 채점하면 창마다의 성공률을 얻을 수 있습니다.
+30 parameters and the delays are randomized every episode.
 
-| 창 반폭 | 1.0 | 0.9 | 0.8 | 0.75 | 0.7 | 0.6 | 0.5 |
-|---|---|---|---|---|---|---|---|
-| 성공률, 전체 게이트 | 91.0% | 89.8% | 82.4% | 75.4% | 64.8% | 37.1% | 13.3% |
-| 성공률, 실제 게이트만 | 91.8% | 91.0% | 86.3% | 81.6% | 74.6% | 52.7% | 28.9% |
+### World-model policy
 
-![창 크기에 따른 성공률](docs/results/window_sweep.png)
+| | |
+|---|---|
+| Algorithm | Informed DreamerV3: the world model also decodes privileged state (training only) |
+| Observation | 64×64 gate mask (30 fps), gyro, accelerometer, FC roll/pitch estimate, flight plan (next three gates) |
+| Privileged decoder | position, velocity, true attitude, FC estimate error, dynamics parameters, delays |
+| Action | throttle, roll/pitch target angle (±55°), yaw rate |
+| Imagination | 16-step latent rollouts for the actor and critic |
+| Reward | progress + gate passage near the opening center; penalties on body rate, speed above the cap, unstoppable descent, low altitude |
 
-평가 프로토콜(`scripts/evaluate.py --protocol`) 비교, 같은 체크포인트, 200 에피소드:
+### Demonstrations and curriculum
 
-| 프로토콜 | 정의 | 성공률 |
+Demonstrations: 800 collision-free episodes of a path-following CTBA controller (2.5 m/s, ≥ 8 gates; 1.6M steps)
+put in the replay buffer before training, with **no behavior-cloning loss**.
+
+| Stage | Steps | Speed cap | Gate window | Floor/altitude penalty + airframe check | Sequence length | Stage-end success (1 / 3 laps, 200 flights) |
+|---|---|---|---|---|---|---|
+| 1 | 0–6M | – | 0.60 m | – | 64 | 81.0 / 30.5% |
+| 2 | 6–8M | 4 m/s | 0.60 m | – | 256 | 84.5 / 40.5% |
+| 3 | 8–14M | 4 m/s | 0.45 m | ✓ | 256 | 80.0 / 65.0% |
+| 4 | 14–16M | 4 m/s | 0.45 m | ✓ | 256 | **91.5 / 79.5%** |
+
+Stage 4 lowers the entropy coefficient (1e-5) and learning rate (2e-6). Each stage continues the previous
+networks and replay buffer.
+
+### GateNet
+
+| | |
+|---|---|
+| Architecture | U-Net (SkyDreamer), multi-scale mask outputs |
+| Data | 545 labeled frames of our gates (HSV auto-label + manual review) |
+| Validation IoU | **0.929** |
+| Onboard time | 3.2 ms on the Jetson Orin Nano |
+
+![GateNet architecture](docs/ctba/gatenet_arch.png)
+
+<p align="center"><img src="docs/ctba/gatenet_results.png" width="640" alt="GateNet results"></p>
+
+![GateNet labeling](docs/ctba/gatenet_labeling.png)
+
+### StochGAN
+
+A generator that turns clean rendered masks into GateNet-like masks (broken edges, thinner frames, spurious
+blobs). Rows: rendered mask, generator after 50 epochs, after 150 epochs. A fine-tuning stage on these masks is
+implemented on branch `ctba` (`./run.sh --finetune-stochgan <snapshot>`, stage `c4g`, test `ceg`); the reported
+policy above is trained on rendered masks with rolling-shutter and erosion augmentation.
+
+![StochGAN examples](docs/ctba/stochgan_examples.png)
+
+---
+
+## Sim-to-real (ongoing)
+
+**Sim-to-real ongoing.** The airframe, track and onboard pipeline are built and measured; closed-loop policy
+flights on the physical drone are in progress.
+
+![Airframe and track](docs/ctba/setup.jpg)
+
+(a) Team-built 0.95 kg quadrotor (thrust-to-weight ratio 5.5): Jetson Orin Nano, camera 30° up, Betaflight FC,
+6S, 5-inch props. (b) Track in the 8 × 11 × 3.5 m arena; G2 on G3 forms a split-S. (c) Gate layout in the simulator.
+
+| Built airframe | Arena test setup |
+|---|---|
+| <img src="docs/ctba/built_airframe.jpg" width="380"> | <img src="docs/ctba/arena_test.jpg" width="420"> |
+
+| Step | Status | Evidence |
 |---|---|---|
-| `paper` | Table III 평가 열, 시작 게이트 출발, d_g 1.0 m | **87.5%** |
-| `strict` | `paper`와 같되 d_g 0.8 m | 77.5% |
-| `mixed` | 학습 열 70%, 시작 게이트 무작위 | 56.0% |
+| Airframe and track | ✅ done | 0.95 kg, TWR 5.5; 4 gates (1.2 m opening) in an 8 × 11 × 3.5 m arena |
+| FC response identification | ✅ done | replaying manual flight logs in the simulator: attitude R² 0.995–0.999, RMS 0.2–0.6° (command-as-attitude: R² 0.67–0.93) |
+| Onboard latency | ✅ done | see table below |
+| GateNet on the venue camera | ✅ done | val IoU 0.929, 3.2 ms on the Jetson |
+| Onboard pipeline | ✅ done | camera → GateNet → policy → MSP → Betaflight angle mode |
+| Closed-loop policy flights | 🔄 in progress | arena tests on the physical drone |
 
-### 한계
+| Measured latency | Value |
+|---|---|
+| Camera pipeline (exposure → frame on the Jetson) | 42–47 ms |
+| Undistortion | 0.5 ms |
+| GateNet | 3.2 ms |
+| Wait for the next policy step | 0–10 ms |
+| Jetson-side serial link (MSP, median–p99) | 1.8–2.3 ms |
+| FC-side (RC smoothing + PID → motor, Blackbox) | 2.5–3.5 ms |
 
-- 성공률은 87.5%
-- 가장 잘 난 에피소드의 최고 속도·가속도(17.9 m/s, 10.4 g)는 논문 수치를 넘습니다.
-- 논문 Figure 9 트랙(big track, Out-of-distribution)을 추가 학습 없이 그대로 비행하면 완주하지 못합니다: 0/100.
-- 시뮬레이션 결과이며, **실기체 전환은 진행 중**
+<p align="center"><img src="docs/ctba/gatenet_venue.jpg" width="640" alt="Onboard camera frame and GateNet mask"></p>
+<p align="center">Onboard camera frame in the arena and its GateNet mask.</p>
 
+---
 
-## 우리 기체와 게이트
+## Code (branch `ctba`)
 
-`./run.sh --hw`는 우리 비행 테스트 환경(게이트 바깥 2.1 m, 카메라 10 cm 앞, 시야각 114.6° × 92.15°,
-추력대중량비 4.1)으로 학습하고, `./run_test.sh`는 이렇게 학습한 결과를 `physical` 프로토콜로 평가합니다.
-자세한 내용은 [`docs/hardware.md`](docs/hardware.md)를 보세요.
-
-`./run.sh --finetune <ckpt>`는 위의 17M 에이전트 전체를 이 조건으로 단계적으로 미세조정합니다
-(카메라·FOV → 2.1 m 프레임 → 추력대중량비 → 통과 판정 창, 9M 스텝).
-단계 구성과 이유는 [`docs/deviations.md`](docs/deviations.md)에 있습니다.
-
-`./run.sh --finetune <ckpt> --team`은 6차 9M 에이전트를 실제 레이싱 트랙(8 × 11 × 3.5 m 방, 게이트 4개,
-개구부 1.2 m / 바깥 1.5 m, `skydreamer/track.py`의 `TEAM_TRACK`)으로 미세조정합니다
-(우리 게이트 → 우리 트랙 → 실제 판정 창 → phase-3, 10M 스텝). `./run_test.sh`는 이 학습을 우리 트랙(`team`)에서만 1랩·3랩으로 평가하고(big 트랙 없음),
-학습 중 1M마다 체크포인트가 `<run>/snapshots/`에 따로 남습니다.
-4M 점검(우리 트랙 1랩 시뮬레이션 완주 30%)에 미달하면 우리 트랙 데모를 학습 중인 run에 넣습니다:
-`./run.sh --collect-demos --team` 후 `./run.sh --resume --demos demos_team`.
-7차는 4M 점검에서 0%였습니다(G2까지 ~14 m/s로 돌진해 천장·벽 충돌). 그래서 7b차는 7차 4M 스냅샷에서
-우리 트랙 속도 제한(4 m/s 초과분에 보상 감점, `track.V_CAP`)과 데모를 함께 넣어 다시 시작합니다(8M 스텝):
-`./run.sh --collect-demos --team` 후 `./run.sh --finetune <7차 4M 스냅샷>/ckpt --team2 --demos demos_team`.
-7b차 8M은 우리 트랙 1랩 physical 39.5%(시뮬레이션 66.5%)였고, 실패는 split-S 탈출 중 바닥 충돌과 G3·G4 정밀도였습니다.
-그래서 7c차는 7b차 8M에서 학습 판정 창을 실제와 같은 0.45 m로, 속도 감점을 진행 보상의 2배에서 5배로 바꿔 phase-3 설정으로 3M 스텝 더 학습합니다(데모 없음):
-`./run.sh --finetune <7b차 run>/ckpt --team3`.
-7c차 3M은 25.5%로 7b차(37.5%, 수정된 평가)보다 나빴습니다(바닥 충돌 2배). 7d차는 7b차 8M에서 7c차의 판정 창 0.45와 7b차의 속도 감점에,
-바닥 충돌을 실제 바닥 기준(프롭 끝이 바닥 0.10 m 이내, `track.FLOOR`)으로 바꿔 2M 스텝 학습합니다: `./run.sh --finetune <7b차 run>/ckpt --team4`.
-
-7d차 2M은 32.0%로 학습할수록 나빠졌습니다(실제 바닥에서 더 낮게 날도록 학습, G3 다음 바닥 충돌 28→56).
-7e차는 다시 7b차 8M에서, 실제 출발(바닥, G1 게이트 면 2.0 m 앞, `track.LAUNCH`)과
-더 이상 멈출 수 없는 하강에 대한 바닥 감점(`track.floor_penalty`, 7d차 궤적으로 보정)을 더해 3M 스텝 학습합니다:
-`./run.sh --finetune <7b차 run>/ckpt --team5`. 평가는 이제 바닥 출발 기준이며, 이전 방식은 `evaluate.py --air-start`.
-
-7e차 3M은 바닥 출발 1랩 48.5%, 3랩 11.5%였습니다. 마스크 erosion(1픽셀)이 우리 게이트의 얇은 틀(0.15 m)을 1.25 m 밖에서 전부 지우고 있었고,
-erosion을 끄면 같은 체크포인트가 1랩 65.5%, 3랩 36.5%입니다. 이제 erosion은 틀을 0.25픽셀만 얇게 합니다(`track.ERODE_PX`, 논문과 같은 비율).
-7f차는 7e차 3M에서, 실제 게이트 면 판정을 기체 외곽 전체 기준으로(`track.swept_offset`, 평가와 동일), 프롭 끝이 0.45 m 아래로 내려가면
-감점(`track.altitude_penalty`), 바닥 감점 2배로 5M 스텝 학습합니다: `./run.sh --finetune <7e차 3M>/ckpt --team6`.
-
-7f차 3M은 1랩 82.0%, 3랩 42.0%(4M: 70.5%, 38.5%)였습니다. 고도 여유 항으로 바닥 추락은 30%→14%로 줄었지만, 기체 외곽 걸림은 그대로였고 G2는 학습할수록 나빠졌습니다.
-7g차는 7f차 3M 스냅샷에서, 실제 게이트 면에서 기체 외곽 최대 오프셋이 0.45 m를 넘으면 1 m당 200 감점(`track.gate_margin_penalty`)을 더해 3M 스텝 학습합니다:
-`./run.sh --finetune <7f차 3M 스냅샷>/ckpt --team7`.
-
-7g차는 2M에서 중단했습니다. 가장 좋은 스냅샷(0.5M, 1.5M)도 3랩 39~43%로 7f차 3M(42%)과 같은 수준이었고, 기체 외곽 걸림이 줄어든 만큼 바닥 추락이 늘었습니다.
-체크포인트 비교는 이제 `./run_compare.sh 이름=<스냅샷> 이름=<스냅샷>`으로 합니다. 같은 비행 400개(seed 20000)로 1·3랩을 평가하고,
-비행별로 짝지어 비교하며(`scripts/compare_evals.py`), 이륙 추락과 비행 중 바닥 추락의 원인을 궤적으로 진단합니다(`scripts/diagnose_failures.py`).
-
-400비행 비교에서 7f차 3M(3랩 46.2%)과 7g차 1.5M(42.2%)은 통계적으로 구분되지 않았습니다(짝지은 차이 +4.0%p, p=0.25).
-7h차는 7f차 3M 스냅샷에서, 기체가 바닥을 벗어나기 전 프롭 끝이 2 cm 아래로 내려가면 감점(`track.launch_tip_penalty`)을 더해 2M 스텝 학습합니다:
-`./run.sh --finetune <7f차 3M 스냅샷>/ckpt --team8`. 이륙 추락(4~6%)은 추력이 약한 기체가 낮은 고도에서 기울면서 생겼습니다.
-7h차 1.5M은 7f차 3M보다 3랩 21%p 낮아(25.0% 대 46.2%, 400비행 짝비교 p<0.001) 중단했습니다.
-7i차는 7f차 3M에서, 게이트마다 법선 방향 접근선(G1 0.4, G2 1.0, G3 0.8, G4 1.2 m)을 따라 진행 보상을 주고 접근선 시작점 정렬에 보상(`track.approach_reward`)을 더해 2M 스텝 학습합니다(스냅샷 0.25M마다):
-`./run.sh --finetune <7f차 3M 스냅샷>/ckpt --team9`. 외곽 걸림의 대부분은 게이트 앞 0.4 m 평면에서 이미 0.45 m 벗어난 통과에서 나왔습니다(G2 25%).
-7i차는 접근선을 학습했지만(G2 접근선 진입 30% → 72%) 외곽 걸림은 오히려 늘어, 3랩 0.5M 31.2%, 1M 27.5%로 7f차 3M(46.2%)보다 낮아 중단했습니다.
-7j차는 배포용이 아닌 진단 실험으로, 인코더 입력에 실제 상태(`true_state`)를 넣었을 때 정책이 얼마나 나는지 봅니다. 한계가 추정에 있는지, 기체와 게이트에 있는지 가르기 위한 실험입니다.
-`python scripts/oracle_ckpt.py <7f차 3M 스냅샷>/ckpt oracle_7f3M/ckpt` 후 `./run.sh --finetune oracle_7f3M/ckpt --oracle`(2M 스텝, 스냅샷 0.25M마다).
-7j차는 3랩 65.5%(1M)로 7f차 3M(46.2%)보다 19.2%p 높았습니다(p<0.001). 실제 상태를 주면 바닥 충돌과 상하 방향 외곽 걸림은 거의 사라졌지만, 좌우 방향 외곽 걸림은 그대로였습니다. 바닥 충돌의 원인은 고도 추정이고, 좌우 정밀도는 학습으로 풀어야 합니다.
-7k차는 7f차 3M에서 G1과 G4를 0.5 m 올린 트랙(`team44up`)으로 3M 스텝 학습합니다. 7f차 설정은 그대로이고 트랙만 바뀝니다(스냅샷 0.25M마다):
-`./run.sh --finetune <7f차 3M 스냅샷>/ckpt --team10`. 비교는 `./run_compare.sh --out compare_g44up --track team44up ...`로 합니다.
-
-### 참고
-- SkyDreamer (https://arxiv.org/abs/2510.14783)
-- MonoRace (https://arxiv.org/abs/2601.15222)
-- DreamerV3 (https://arxiv.org/abs/2301.04104)
-- Imitation learning (https://cding.tistory.com/71)
+| Path | Contents |
+|---|---|
+| [`hierarchy_control/ctba/`](https://github.com/B-logg/E2E-Autonomous-DroneRacing/tree/ctba/hierarchy_control/ctba) | CTBA plant, randomization, environment, curriculum tasks, demonstrations |
+| [`hierarchy_control/sysid/`](https://github.com/B-logg/E2E-Autonomous-DroneRacing/tree/ctba/hierarchy_control/sysid) | FC identification from Betaflight Blackbox logs, replay check |
+| [`hierarchy_control/jetson_bench/`](https://github.com/B-logg/E2E-Autonomous-DroneRacing/tree/ctba/hierarchy_control/jetson_bench) | Jetson inference + MSP latency benchmark |
+| [`hierarchy_control/scripts/`](https://github.com/B-logg/E2E-Autonomous-DroneRacing/tree/ctba/hierarchy_control/scripts) | training, evaluation and analysis scripts |
